@@ -24,7 +24,7 @@ To use the JobQueue, you must install PTB via
 
 import logging
 import json
-import datetime
+from datetime import datetime, timedelta
 
 from telegram import __version__ as TG_VER
 
@@ -51,16 +51,6 @@ with open("config.json", "r") as config_file:
     config = json.load(config_file)
     config_file.close()
 
-# Define a few command handlers. These usually take the two arguments update and
-# context.
-# Best practice would be to replace context with an underscore,
-# since context is an unused local variable.
-# This being an example and not having context present confusing beginners,
-# we decided to have it present as context.
-
-next_time = datetime.datetime.now()
-state = 1
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends explanation on how to use the bot."""
     await update.message.reply_text("Use /start_timer to start pomodoro and /stop_timer to stop pomodoro")
@@ -68,29 +58,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def notification(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send the notification."""
-    now = datetime.datetime.now()
-    job = context.job
-
-    if state in [1,3,5,7] and now == next_time:
-        await context.bot.send_message(job.chat_id, text=f"Session started")
-        next_time += datetime.timedelta(1500)
-        state += 1
     
-    elif state == [2,4,6] and now == next_time:
-        await context.bot.send_message(job.chat_id, text=f"Short break")
-        next_time += datetime.timedelta(300)
-        state += 1
+    job = context.job
+    now = datetime.now().strftime('%Y-%m-%d %H:%M')
+    next_time = job.data['next_time'].strftime('%Y-%m-%d %H:%M')
 
-    elif state == 8 and now == next_time:
-        await context.bot.send_message(job.chat_id, text=f"Long break")
-        next_time += datetime.timedelta(900)
-        state = 1
+    if job.data['state'] in [1,3,5,7] and now == next_time:
+        await context.bot.send_message(job.chat_id, text="Session started")
+        job.data['next_time'] += timedelta(minutes=25)
+        job.data['state'] += 1
+    
+    elif job.data['state'] in [2,4,6] and now == next_time:
+        await context.bot.send_message(job.chat_id, text="Short break")
+        job.data['next_time'] += timedelta(minutes=5)
+        job.data['state'] += 1
 
+    elif job.data['state'] == 8 and now == next_time:
+        await context.bot.send_message(job.chat_id, text="Long break")
+        job.data['next_time'] += timedelta(minutes=15)
+        job.data['state'] = 1
 
-def remove_job_if_exists(name: str, job_queue: JobQueue) -> bool:
+def remove_job_if_exists(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Remove job with given name. Returns whether job was removed."""
 
-    current_jobs = job_queue.get_jobs_by_name(name)
+    current_jobs = context.job_queue.get_jobs_by_name(name)
     if not current_jobs:
         return False
     for job in current_jobs:
@@ -98,19 +89,23 @@ def remove_job_if_exists(name: str, job_queue: JobQueue) -> bool:
     return True
 
 
-async def start_timer(update: Update, job_queue: JobQueue) -> None:
+async def start_timer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Add a job to the queue."""
     chat_id = update.effective_message.chat_id
 
-    # job_removed = remove_job_if_exists(str(chat_id), context)
-
-    # text = "Timer successfulmessagely set!"
-    # if job_removed:
-    #     text += " Old one was removed."
-    # await update.effective_message.reply_text(text)
-
     try:
-        job_queue.run_repeating(notification, 60, chat_id=chat_id, name=str(chat_id))
+
+        job_removed = remove_job_if_exists(str(chat_id), context)
+        
+        data = {'next_time':datetime.now(), 'state':1}
+
+        context.job_queue.run_repeating(notification, 60, chat_id=chat_id, name=str(chat_id), data=data, first=1)
+
+        text = "Timer successfully set!"
+        if job_removed:
+            text += " Old one was removed."
+        await update.effective_message.reply_text(text)
+
     except (IndexError, ValueError):
         await update.effective_message.reply_text("Usage: /timer_start")
 
