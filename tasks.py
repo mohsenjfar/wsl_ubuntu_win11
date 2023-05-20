@@ -1,14 +1,7 @@
-"""
-Simple Bot to send timed Telegram messages.
-
-Note:
-To use the JobQueue, you must install PTB via
-`pip install python-telegram-bot[job-queue]`
-"""
-
 import logging
 import json
 from datetime import datetime, timedelta
+import sqlite3
 
 from telegram import __version__ as TG_VER
 
@@ -35,9 +28,10 @@ with open("config.json", "r") as config_file:
     config = json.load(config_file)
     config_file.close()
 
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends explanation on how to use the bot."""
-    await update.message.reply_text("Use /start_timer to start pomodoro and /stop_timer to stop pomodoro")
+    await update.message.reply_text("Use /timer_start to start pomodoro and /timer_stop to stop pomodoro")
 
 
 async def notification(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -62,6 +56,7 @@ async def notification(context: ContextTypes.DEFAULT_TYPE) -> None:
         job.data['next_time'] += timedelta(minutes=15)
         job.data['state'] = 1
 
+
 def remove_job_if_exists(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Remove job with given name. Returns whether job was removed."""
 
@@ -73,7 +68,7 @@ def remove_job_if_exists(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
     return True
 
 
-async def start_timer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def timer_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Add a job to the queue."""
     chat_id = update.effective_message.chat_id
 
@@ -94,27 +89,217 @@ async def start_timer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.effective_message.reply_text("Usage: /timer_start")
 
 
-async def stop_timer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def timer_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Remove the job if the user changed their mind."""
     chat_id = update.message.chat_id
     job_removed = remove_job_if_exists(str(chat_id), context)
     text = "Timer successfully cancelled!" if job_removed else "You have no active timer."
     await update.message.reply_text(text)
 
+def next_time(time):
+    
+    values = time.split(';')
+    now = datetime.strptime(values[0], '%Y-%m-%d-%H:%M')
+    days = int(values[1])
+    next_t = now + timedelta(days=days)
+    return next_t.strftime(f'%Y-%m-%d-%H:%M;{days}')
+
+
+async def due_tasks(context: ContextTypes.DEFAULT_TYPE) -> None:
+    
+    job = context.job
+
+    date = datetime.now().strftime('%Y-%m-%d-%H:%M%')
+    crsr.execute(f"SELECT * FROM tasks WHERE date LIKE {date}")
+    tasks = crsr.fetchall()
+
+    if tasks:
+        for task in tasks:
+            text = f"Task No: {task[0]}\nSummary: {task[1]}\nDate: {task[2]}\nDescription: {task[3]}"
+            await context.bot.send_message(job.chat_id, text=text)
+            sql_command = f"UPDATE tasks SET date={next_time(task[2])} WHERE id={task[0]}"
+            crsr.execute(sql_command)
+            conn.commit()
+
+
+async def today_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    
+    job = context.job
+    
+    date = datetime.now().strftime('%Y-%m-%d%')
+    crsr.execute(f"SELECT * FROM tasks WHERE date LIKE {date}")
+    tasks = crsr.fetchall()
+    text = "\n\n".join([
+        f"Task No: {task[0]}\nSummary: {task[1]}\nDate: {task[2]}\nDescription: {task[3]}"
+        for task in tasks
+    ])
+    await context.bot.send_message(job.chat_id, text=text)
+
+
+async def tasker_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Add a job to the queue."""
+    chat_id = update.effective_message.chat_id
+
+    try:
+
+        job_removed = remove_job_if_exists(str(chat_id), context)
+
+        context.job_queue.run_repeating(notification, 60, chat_id=chat_id, name=str(chat_id), first=1)
+
+        text = "Tasker successfully started!"
+        if job_removed:
+            text += " Old one was removed."
+        await update.effective_message.reply_text(text)
+
+    except (IndexError, ValueError):
+        await update.effective_message.reply_text("Usage: /tasker_start")
+
+
+async def tasker_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Remove the job if the user changed their mind."""
+    chat_id = update.message.chat_id
+    job_removed = remove_job_if_exists(str(chat_id), context)
+    text = "Tasker successfully cancelled!" if job_removed else "You have no active Tasker."
+    await update.message.reply_text(text)
+
+
+async def insert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+
+    try:
+        summary = context.args[0] 
+        date = context.args[1]
+        description = context.args[2]
+
+        # Create the tuple "params" with all the parameters inserted by the user
+        params = (summary, date, description)
+        sql_command = "INSERT INTO tasks VALUES (NULL, ?, ?, ?);" 
+        crsr.execute(sql_command, params)
+        conn.commit()
+
+        # If at least 1 row is affected by the query we send specific messages
+        if crsr.rowcount < 1:
+            text = "OOps! something wrong, please try again"
+            await update.message.reply_text(text)
+        else:
+            text = f"Good news, {summary} successfully inserted!"
+            await update.message.reply_text(text)
+    
+    except(IndexError, ValueError):
+        await update.effective_message.reply_text("Usage: /insert summary date description")
+
+
+async def select(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    
+    try:
+        # Execute the query and get all (*) the oders
+        crsr.execute("SELECT * FROM tasks")
+        tasks = crsr.fetchall() # fetch all the results
+
+        if tasks:
+            text = "\n\n".join([
+                f"Task No: {task[0]}\nSummary: {task[1]}\nDate: {task[2]}\nDescription: {task[3]}"
+                for task in tasks
+            ])
+            
+            await update.message.reply_text(text)
+        
+        # Otherwhise, print a default text
+        else:
+            text = "OOps! Nothing to show"
+            await update.message.reply_text(text)
+
+    except (IndexError, ValueError): 
+        await update.effective_message.reply_text("Usage: /select")
+
+
+async def update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        # Get the arguments
+        id = context.args[0]
+        summary = context.args[1] 
+        date = context.args[2]
+        description = context.args[3]
+
+        # Create the tuple "params" with all the parameters inserted by the user
+        params = (summary, date, description, id)
+
+        # Create the UPDATE query, we are updating the product with a specific id so we must put the WHERE clause
+        sql_command="UPDATE tasks SET summary=?, date=?, description=? WHERE id =?"
+        crsr.execute(sql_command, params) # Execute the query
+        conn.commit() # Commit the changes
+
+        # If at least 1 row is affected by the query we send a specific message
+        if crsr.rowcount < 1:
+            text = "OOps! something wrong, please try again"
+            await update.message.reply_text(text)
+        else:
+            text = f"Good news, {summary} successfully updated!"
+            await update.message.reply_text(text)
+
+    except (IndexError, ValueError): 
+        await update.effective_message.reply_text("Usage: /update task_id summary date description")
+
+
+async def delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        # Get the arguments
+        id = context.args[0]
+
+        sql_command = "DELETE FROM tasks WHERE id = (?);"
+        crsr.execute(sql_command, (id,))
+        conn.commit()
+
+        # If at least 1 row is affected by the query we send a specific message
+        if crsr.rowcount < 1:
+            text = "OOps! something wrong, please try again"
+            await update.message.reply_text(text)
+        else:
+            text = f"Maybe not very good news, but task with id {id} successfully deleted!"
+            await update.message.reply_text(text)
+
+    except (IndexError, ValueError): 
+        await update.effective_message.reply_text("Usage: /delete task_id")
+
 
 def main() -> None:
     """Run bot."""
+
     # Create the Application and pass it your bot's token.
     application = Application.builder().token(config["API_TOKEN"]).build()
 
     # on different commands - answer in Telegram
     application.add_handler(CommandHandler(["start", "help"], start))
-    application.add_handler(CommandHandler("start_timer", start_timer))
-    application.add_handler(CommandHandler("stop_timer", stop_timer))
+    application.add_handler(CommandHandler("timer_start", timer_start))
+    application.add_handler(CommandHandler("timer_stop", timer_stop))
+    application.add_handler(CommandHandler("insert", insert))
+    application.add_handler(CommandHandler("select", select))
+    application.add_handler(CommandHandler("update", update))
+    application.add_handler(CommandHandler("delete", delete))
+    application.add_handler(CommandHandler("tasker_start", tasker_start))
+    application.add_handler(CommandHandler("tasker_stop", tasker_stop))
+    application.add_handler(CommandHandler("today_tasks", today_tasks))
 
     # Run the bot until the user presses Ctrl-C
     application.run_polling()
 
 
 if __name__ == "__main__":
+
+    print("Initializing Database...")
+    # Connect to local database
+    db_name = 'db.sqlite'
+    conn = sqlite3.connect(db_name, check_same_thread=False)
+    # Create the cursor
+    crsr = conn.cursor() 
+    print("Connected to the database")
+
+    # Command that creates the "oders" table 
+    sql_command = """CREATE TABLE IF NOT EXISTS tasks ( 
+        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        summary VARCHAR(200),
+        date VARCHAR(200), 
+        description VARCHAR(500));"""
+    crsr.execute(sql_command)
+    print("Tables ready")
+
     main()
