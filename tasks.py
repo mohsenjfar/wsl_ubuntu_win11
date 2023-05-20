@@ -58,7 +58,7 @@ async def notification(context: ContextTypes.DEFAULT_TYPE) -> None:
         job.data['state'] += 1
 
     elif job.data['state'] == 8 and now == next_time:
-        await context.bot.send_message(job.chat_id, text="Long break")
+        await context.bot.send_message(job.chat_id, text="Long break\nDon't forget to drink water!")
         job.data['next_time'] += timedelta(minutes=15)
         job.data['state'] = 1
 
