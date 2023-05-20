@@ -31,7 +31,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
-with open("config.json", "r") as config_file:
+with open("/root/config.json", "r") as config_file:
     config = json.load(config_file)
     config_file.close()
 
