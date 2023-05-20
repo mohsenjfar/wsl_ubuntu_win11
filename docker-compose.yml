@@ -1,8 +1,8 @@
 version: "3"
 services:
-  tasks:
-    image: taskbot:latest
+  taskerbot:
+    image: mohsenjfar/taskerbot:latest
     restart: unless-stopped
-    container_name: taskbot
+    container_name: taskerbot
     volumes:
         - "./config.json:/config.json"
