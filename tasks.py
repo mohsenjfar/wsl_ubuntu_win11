@@ -31,7 +31,7 @@ with open("config.json", "r") as config_file:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends explanation on how to use the bot."""
-    await update.message.reply_text("Use /timer_start to start pomodoro and /timer_stop to stop pomodoro")
+    await update.message.reply_text("Hi there!")
 
 
 async def notification(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -127,13 +127,15 @@ async def today_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     job = context.job
     
     date = datetime.now().strftime('%Y-%m-%d%')
-    crsr.execute(f"SELECT * FROM tasks WHERE date LIKE {date}")
+    sql_command = "SELECT * FROM tasks WHERE date LIKE ?"
+    crsr.execute(sql_command, (date,))
     tasks = crsr.fetchall()
-    text = "\n\n".join([
-        f"Task No: {task[0]}\nSummary: {task[1]}\nDate: {task[2]}\nDescription: {task[3]}"
-        for task in tasks
-    ])
-    await context.bot.send_message(job.chat_id, text=text)
+    if tasks:
+        for task in tasks:
+            text = f"Summary: {task[1]}\nDate: {task[2]}\nDescription: {task[3]}"
+            await update.effective_message.reply_text(text)
+    else:
+        await update.effective_message.reply_text("Nothing to present!")
 
 
 async def tasker_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -265,7 +267,7 @@ def main() -> None:
     """Run bot."""
 
     # Create the Application and pass it your bot's token.
-    application = Application.builder().token(config["API_TOKEN"]).build()
+    application = Application.builder().token(config["TEST_TOKEN"]).build()
 
     # on different commands - answer in Telegram
     application.add_handler(CommandHandler(["start", "help"], start))
@@ -277,7 +279,7 @@ def main() -> None:
     application.add_handler(CommandHandler("delete", delete))
     application.add_handler(CommandHandler("tasker_start", tasker_start))
     application.add_handler(CommandHandler("tasker_stop", tasker_stop))
-    application.add_handler(CommandHandler("today_tasks", today_tasks))
+    application.add_handler(CommandHandler("today", today_tasks))
 
     # Run the bot until the user presses Ctrl-C
     application.run_polling()
