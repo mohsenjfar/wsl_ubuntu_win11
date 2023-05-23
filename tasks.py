@@ -1,8 +1,16 @@
 import logging
 import json
-from datetime import datetime, timedelta
+from datetime import date, time, datetime, timedelta
 import sqlite3
-
+from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+)
 from telegram import __version__ as TG_VER
 
 try:
@@ -16,45 +24,60 @@ if __version_info__ < (20, 0, 0, "alpha", 1):
         f"{TG_VER} version of this example, "
         f"visit https://docs.python-telegram-bot.org/en/v{TG_VER}/examples.html"
     )
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, JobQueue
+
 
 # Enable logging
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+# logging.basicConfig(
+#     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+# )
 
 with open("config.json", "r") as config_file:
     config = json.load(config_file)
     config_file.close()
 
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Sends explanation on how to use the bot."""
-    await update.message.reply_text("Hi there!")
+SUMMARY, DATE, FREQUENCY, DESCRIPTION, CONFIRM = range(5)
 
 
-async def notification(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send the notification."""
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Starts the conversation"""
     
-    job = context.job
-    now = datetime.now().strftime('%Y-%m-%d %H:%M')
-    next_time = job.data['next_time'].strftime('%Y-%m-%d %H:%M')
+    reply_keyboard = [
+        ["/timer_start", "/timer_stop"],
+        ["/insert", "/update", "/delete", "/query"],
+        ["/today", "/clear", "/cancel", "/help"]
+    ]
 
-    if job.data['state'] in [1,3,5,7] and now == next_time:
-        await context.bot.send_message(job.chat_id, text="Session started")
-        job.data['next_time'] += timedelta(minutes=25)
-        job.data['state'] += 1
-    
-    elif job.data['state'] in [2,4,6] and now == next_time:
-        await context.bot.send_message(job.chat_id, text="Short break")
-        job.data['next_time'] += timedelta(minutes=5)
-        job.data['state'] += 1
+    context.user_data['values'] = {}
 
-    elif job.data['state'] == 8 and now == next_time:
-        await context.bot.send_message(job.chat_id, text="Long break")
-        job.data['next_time'] += timedelta(minutes=15)
-        job.data['state'] = 1
+    await update.message.reply_text(
+        "Need help? use /help button",
+        reply_markup=ReplyKeyboardMarkup(
+            reply_keyboard, one_time_keyboard=True, resize_keyboard=True
+        ),
+    )
+
+
+def return_time():
+    start_time = datetime.combine(date.today(), time(7,0))
+    end_time = datetime.combine(date.today(), time(22,0))
+    periods = [25,5,25,5,25,5,25,15]
+    states = {
+        25:"Session started", 
+        5:"Short break", 
+        15:"Long break\nDon't forget to drink water"
+    }
+    times = {}
+    while start_time < end_time:
+        for p in periods:
+            times[start_time.strftime('%H:%M')] = states[p]
+            start_time += timedelta(minutes=p)
+    return times
+
+
+async def notification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    now  = datetime.now().strftime('%H:%M')
+    if now in context.user_data["times"]:
+        await update.effective_message.reply_text(context.user_data["times"][now])
 
 
 def remove_job_if_exists(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -69,24 +92,20 @@ def remove_job_if_exists(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
 
 
 async def timer_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Add a job to the queue."""
+
+    context.user_data['times'] = return_time()
+
     chat_id = update.effective_message.chat_id
 
-    try:
+    job_removed = remove_job_if_exists(str(chat_id), context)
 
-        job_removed = remove_job_if_exists(str(chat_id), context)
-        
-        data = {'next_time':datetime.now(), 'state':1}
+    context.job_queue.run_repeating(notification, 60, chat_id=chat_id, name=str(chat_id), first=1)
 
-        context.job_queue.run_repeating(notification, 60, chat_id=chat_id, name=str(chat_id), data=data, first=1)
+    text = "Timer successfully set!"
+    if job_removed:
+        text += " Old one was removed."
 
-        text = "Timer successfully set!"
-        if job_removed:
-            text += " Old one was removed."
-        await update.effective_message.reply_text(text)
-
-    except (IndexError, ValueError):
-        await update.effective_message.reply_text("Usage: /timer_start")
+    await update.message.reply_text(text)
 
 
 async def timer_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -95,31 +114,6 @@ async def timer_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     job_removed = remove_job_if_exists(str(chat_id), context)
     text = "Timer successfully cancelled!" if job_removed else "You have no active timer."
     await update.message.reply_text(text)
-
-def next_time(time):
-    
-    values = time.split(';')
-    now = datetime.strptime(values[0], '%Y-%m-%d-%H:%M')
-    days = int(values[1])
-    next_t = now + timedelta(days=days)
-    return next_t.strftime(f'%Y-%m-%d-%H:%M;{days}')
-
-
-async def due_tasks(context: ContextTypes.DEFAULT_TYPE) -> None:
-    
-    job = context.job
-
-    date = datetime.now().strftime('%Y-%m-%d-%H:%M%')
-    crsr.execute(f"SELECT * FROM tasks WHERE date LIKE {date}")
-    tasks = crsr.fetchall()
-
-    if tasks:
-        for task in tasks:
-            text = f"Task No: {task[0]}\nSummary: {task[1]}\nDate: {task[2]}\nDescription: {task[3]}"
-            await context.bot.send_message(job.chat_id, text=text)
-            sql_command = f"UPDATE tasks SET date={next_time(task[2])} WHERE id={task[0]}"
-            crsr.execute(sql_command)
-            conn.commit()
 
 
 async def today_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -138,148 +132,149 @@ async def today_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.effective_message.reply_text("Nothing to present!")
 
 
-async def tasker_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Add a job to the queue."""
-    chat_id = update.effective_message.chat_id
+async def insert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
-    try:
+    reply_keyboard = [
+        ["/cancel"]
+    ]
 
-        job_removed = remove_job_if_exists(str(chat_id), context)
+    await update.message.reply_text(
+        "Please send me a summary of your task:",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
+    )
 
-        context.job_queue.run_repeating(notification, 60, chat_id=chat_id, name=str(chat_id), first=1)
-
-        text = "Tasker successfully started!"
-        if job_removed:
-            text += " Old one was removed."
-        await update.effective_message.reply_text(text)
-
-    except (IndexError, ValueError):
-        await update.effective_message.reply_text("Usage: /tasker_start")
+    return SUMMARY
 
 
-async def tasker_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Remove the job if the user changed their mind."""
-    chat_id = update.message.chat_id
-    job_removed = remove_job_if_exists(str(chat_id), context)
-    text = "Tasker successfully cancelled!" if job_removed else "You have no active Tasker."
-    await update.message.reply_text(text)
-
-
-async def insert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-
-    try:
-        summary = context.args[0] 
-        date = context.args[1]
-        description = context.args[2]
-
-        # Create the tuple "params" with all the parameters inserted by the user
-        params = (summary, date, description)
-        sql_command = "INSERT INTO tasks VALUES (NULL, ?, ?, ?);" 
-        crsr.execute(sql_command, params)
-        conn.commit()
-
-        # If at least 1 row is affected by the query we send specific messages
-        if crsr.rowcount < 1:
-            text = "OOps! something wrong, please try again"
-            await update.message.reply_text(text)
-        else:
-            text = f"Good news, {summary} successfully inserted!"
-            await update.message.reply_text(text)
+async def task_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Stores the info about the user and ends the conversation."""
     
-    except(IndexError, ValueError):
-        await update.effective_message.reply_text("Usage: /insert summary date description")
+    context.user_data['values']['summary'] = update.message.text
+
+    reply_keyboard = [
+        ["/skip", "/cancel"]
+    ]
+
+    await update.message.reply_text(
+        "Please send me date and time",
+        reply_markup=ReplyKeyboardMarkup(
+            reply_keyboard, 
+            one_time_keyboard=True, 
+            resize_keyboard=True,
+            input_field_placeholder="yyyy-mm-dd hh:mm"
+        ),
+    )
+
+    return DATE
 
 
-async def select(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def task_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Stores the info about the user and ends the conversation."""
     
-    try:
-        # Execute the query and get all (*) the oders
-        crsr.execute("SELECT * FROM tasks")
-        tasks = crsr.fetchall() # fetch all the results
+    context.user_data['values']['date'] = update.message.text
 
-        if tasks:
-            text = "\n\n".join([
-                f"Task No: {task[0]}\nSummary: {task[1]}\nDate: {task[2]}\nDescription: {task[3]}"
-                for task in tasks
-            ])
-            
-            await update.message.reply_text(text)
-        
-        # Otherwhise, print a default text
-        else:
-            text = "OOps! Nothing to show"
-            await update.message.reply_text(text)
+    reply_keyboard = [
+        ["/skip", "/cancel"]
+    ]
 
-    except (IndexError, ValueError): 
-        await update.effective_message.reply_text("Usage: /select")
+    await update.message.reply_text(
+        "How often does it repeat?",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
+    )
+
+    return FREQUENCY
 
 
-async def update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    try:
-        # Get the arguments
-        id = context.args[0]
-        summary = context.args[1] 
-        date = context.args[2]
-        description = context.args[3]
+async def task_frequency(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Stores the info about the user and ends the conversation."""
+    
+    context.user_data['values']['frequency'] = update.message.text
 
-        # Create the tuple "params" with all the parameters inserted by the user
-        params = (summary, date, description, id)
+    reply_keyboard = [
+        ["/skip", "/cancel"]
+    ]
 
-        # Create the UPDATE query, we are updating the product with a specific id so we must put the WHERE clause
-        sql_command="UPDATE tasks SET summary=?, date=?, description=? WHERE id =?"
-        crsr.execute(sql_command, params) # Execute the query
-        conn.commit() # Commit the changes
+    await update.message.reply_text(
+        "Do you have any descriptions?",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
+    )
 
-        # If at least 1 row is affected by the query we send a specific message
-        if crsr.rowcount < 1:
-            text = "OOps! something wrong, please try again"
-            await update.message.reply_text(text)
-        else:
-            text = f"Good news, {summary} successfully updated!"
-            await update.message.reply_text(text)
-
-    except (IndexError, ValueError): 
-        await update.effective_message.reply_text("Usage: /update task_id summary date description")
+    return DESCRIPTION
 
 
-async def delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    try:
-        # Get the arguments
-        id = context.args[0]
+async def task_description(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data['values']['description'] = update.message.text
 
-        sql_command = "DELETE FROM tasks WHERE id = (?);"
-        crsr.execute(sql_command, (id,))
-        conn.commit()
+    text = ""
 
-        # If at least 1 row is affected by the query we send a specific message
-        if crsr.rowcount < 1:
-            text = "OOps! something wrong, please try again"
-            await update.message.reply_text(text)
-        else:
-            text = f"Maybe not very good news, but task with id {id} successfully deleted!"
-            await update.message.reply_text(text)
+    for value in context.user_data['values']:
+        text += f"{value}: {context.user_data['values'][value]}\n"
 
-    except (IndexError, ValueError): 
-        await update.effective_message.reply_text("Usage: /delete task_id")
+    reply_keyboard = [
+        ["/cancel"]
+    ]
+
+    await update.message.reply_text(
+        "Here is the data you gave me, all ok?\n\n" + text,
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
+    )
+
+    return CONFIRM
+
+
+async def data_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+
+    # Create the tuple "params" with all the parameters inserted by the user
+    params = (
+        context.user_data['values']['summary'],
+        context.user_data['values']['date'],
+        context.user_data['values']['frequency'],
+        context.user_data['values']['description'],
+
+    )
+    sql_command = "INSERT INTO tasks VALUES (NULL, ?, ?, ?, ?);" 
+    crsr.execute(sql_command, params)
+    conn.commit()
+
+    # If at least 1 row is affected by the query we send specific messages
+    if crsr.rowcount < 1:
+        text = "OOps! something wrong, please try again"
+        await update.message.reply_text(text)
+    else:
+        text = f"Good news, {context.user_data['values']['summary']} successfully inserted!"
+        await update.message.reply_text(text)
+        del context.user_data['values']
+
+    await update.message.reply_text(
+        "Task successfully added.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+    return ConversationHandler.END
 
 
 def main() -> None:
-    """Run bot."""
-
+    """Run the bot."""
     # Create the Application and pass it your bot's token.
-    application = Application.builder().token(config["TEST_TOKEN"]).build()
+    application = Application.builder().token("6072917486:AAGWJupGrAGKvGBUqVtwCMKjryugaNY9o2E").build()
 
-    # on different commands - answer in Telegram
-    application.add_handler(CommandHandler(["start", "help"], start))
+    # Add conversation handler with the states GENDER, PHOTO, LOCATION and BIO
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("insert", insert)],
+        states={
+            SUMMARY : [MessageHandler(filters.TEXT & ~filters.COMMAND, task_summary)],
+            DATE : [MessageHandler(filters.TEXT & ~filters.COMMAND, task_date)],
+            FREQUENCY : [MessageHandler(filters.TEXT & ~filters.COMMAND, task_frequency)],
+            DESCRIPTION : [MessageHandler(filters.TEXT & ~filters.COMMAND, task_description)],
+            CONFIRM : [MessageHandler(filters.TEXT & ~filters.COMMAND, data_confirm)],
+        },
+        fallbacks=[CommandHandler("timer_stop", timer_stop)],
+    )
+
+    application.add_handler(conv_handler)
+    application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("timer_start", timer_start))
     application.add_handler(CommandHandler("timer_stop", timer_stop))
-    application.add_handler(CommandHandler("insert", insert))
-    application.add_handler(CommandHandler("select", select))
-    application.add_handler(CommandHandler("update", update))
-    application.add_handler(CommandHandler("delete", delete))
-    application.add_handler(CommandHandler("tasker_start", tasker_start))
-    application.add_handler(CommandHandler("tasker_stop", tasker_stop))
-    application.add_handler(CommandHandler("today", today_tasks))
 
     # Run the bot until the user presses Ctrl-C
     application.run_polling()
@@ -299,7 +294,8 @@ if __name__ == "__main__":
     sql_command = """CREATE TABLE IF NOT EXISTS tasks ( 
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         summary VARCHAR(200),
-        date VARCHAR(200), 
+        date VARCHAR(200),
+        frequency CHARACTER(20),
         description VARCHAR(500));"""
     crsr.execute(sql_command)
     print("Tables ready")
