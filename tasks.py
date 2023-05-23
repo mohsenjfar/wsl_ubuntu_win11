@@ -47,8 +47,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         ["/today", "/clear", "/cancel", "/help"]
     ]
 
-    context.user_data['values'] = {}
-
     await update.message.reply_text(
         "Need help? use /help button",
         reply_markup=ReplyKeyboardMarkup(
@@ -74,10 +72,14 @@ def return_time():
     return times
 
 
-async def notification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def notification(context: ContextTypes.DEFAULT_TYPE) -> None:
+    
+    job = context.job
+
     now  = datetime.now().strftime('%H:%M')
-    if now in context.user_data["times"]:
-        await update.effective_message.reply_text(context.user_data["times"][now])
+
+    if now in job.data:
+        await context.bot.send_message(job.chat_id, text=job.data[now])
 
 
 def remove_job_if_exists(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -93,13 +95,13 @@ def remove_job_if_exists(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
 
 async def timer_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
-    context.user_data['times'] = return_time()
+    data = return_time()
 
     chat_id = update.effective_message.chat_id
 
     job_removed = remove_job_if_exists(str(chat_id), context)
 
-    context.job_queue.run_repeating(notification, 60, chat_id=chat_id, name=str(chat_id), first=1)
+    context.job_queue.run_repeating(notification, 60, chat_id=chat_id, name=str(chat_id), data=data, first=1)
 
     text = "Timer successfully set!"
     if job_removed:
@@ -137,6 +139,8 @@ async def insert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     reply_keyboard = [
         ["/cancel"]
     ]
+
+    context.user_data['values'] = {}
 
     await update.message.reply_text(
         "Please send me a summary of your task:",
@@ -211,7 +215,7 @@ async def task_description(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         text += f"{value}: {context.user_data['values'][value]}\n"
 
     reply_keyboard = [
-        ["/cancel"]
+        ["/confirm","/cancel"]
     ]
 
     await update.message.reply_text(
