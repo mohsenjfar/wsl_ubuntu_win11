@@ -277,7 +277,7 @@ async def delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 def main() -> None:
     """Run the bot."""
     # Create the Application and pass it your bot's token.
-    application = Application.builder().token("6072917486:AAGWJupGrAGKvGBUqVtwCMKjryugaNY9o2E").build()
+    application = Application.builder().token(config["TEST_TOKEN"]).build()
 
     # Add conversation handler with the states GENDER, PHOTO, LOCATION and BIO
     conv_handler = ConversationHandler(
