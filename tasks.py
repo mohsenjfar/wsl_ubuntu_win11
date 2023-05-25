@@ -27,9 +27,9 @@ if __version_info__ < (20, 0, 0, "alpha", 1):
 
 
 # Enable logging
-# logging.basicConfig(
-#     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-# )
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
 
 with open("/root/config.json", "r") as config_file:
     config = json.load(config_file)
