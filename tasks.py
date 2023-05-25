@@ -2,7 +2,7 @@ import logging
 import json
 from datetime import date, time, datetime, timedelta
 import sqlite3
-from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
+from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -35,22 +35,21 @@ with open("config.json", "r") as config_file:
     config = json.load(config_file)
     config_file.close()
 
-SUMMARY, DATE, FREQUENCY, DESCRIPTION, CONFIRM = range(5)
+SUMMARY, DESCRIPTION, DATE, CONFIRM = range(4)
 
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Starts the conversation"""
-    
-    reply_keyboard = [
+main_keyboard = [
         ["/timer_start", "/timer_stop"],
         ["/insert", "/update", "/delete", "/query"],
         ["/today", "/clear", "/cancel", "/help"]
     ]
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Starts the conversation"""
+
     await update.message.reply_text(
         "Need help? use /help button",
         reply_markup=ReplyKeyboardMarkup(
-            reply_keyboard, one_time_keyboard=True, resize_keyboard=True
+            main_keyboard, one_time_keyboard=True, resize_keyboard=True
         ),
     )
 
@@ -122,6 +121,8 @@ async def today_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     
     job = context.job
     
+    context.user_data['message_id'] = update.message.message_id
+    
     date = datetime.now().strftime('%Y-%m-%d%')
     sql_command = "SELECT * FROM tasks WHERE date LIKE ?"
     crsr.execute(sql_command, (date,))
@@ -143,7 +144,7 @@ async def insert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['values'] = {}
 
     await update.message.reply_text(
-        "Please send me a summary of your task:",
+        "Please send me a summary for your task:",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
     )
 
@@ -160,12 +161,47 @@ async def task_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     ]
 
     await update.message.reply_text(
+        "Do you have any descriptions?",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
+    )
+
+    return DESCRIPTION
+
+async def task_description(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Stores the info about the user and ends the conversation."""
+    
+    context.user_data['values']['description'] = update.message.text
+
+    reply_keyboard = [
+        ["/cancel"]
+    ]
+
+    await update.message.reply_text(
         "Please send me date and time",
         reply_markup=ReplyKeyboardMarkup(
             reply_keyboard, 
             one_time_keyboard=True, 
             resize_keyboard=True,
-            input_field_placeholder="yyyy-mm-dd hh:mm"
+            input_field_placeholder="yyyy-mm-dd hh:mm frq"
+        ),
+    )
+
+    return DATE
+
+async def description_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Skips the location and asks for info about the user."""
+
+    reply_keyboard = [
+        ["/cancel"]
+    ]
+
+    await update.message.reply_text(
+        "Please send me date and time",
+        reply_markup=ReplyKeyboardMarkup(
+            reply_keyboard, 
+            one_time_keyboard=True, 
+            resize_keyboard=True,
+            input_field_placeholder="yyyy-mm-dd hh:mm frq"
         ),
     )
 
@@ -173,41 +209,10 @@ async def task_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
 
 async def task_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+
     """Stores the info about the user and ends the conversation."""
     
     context.user_data['values']['date'] = update.message.text
-
-    reply_keyboard = [
-        ["/skip", "/cancel"]
-    ]
-
-    await update.message.reply_text(
-        "How often does it repeat?",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
-    )
-
-    return FREQUENCY
-
-
-async def task_frequency(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Stores the info about the user and ends the conversation."""
-    
-    context.user_data['values']['frequency'] = update.message.text
-
-    reply_keyboard = [
-        ["/skip", "/cancel"]
-    ]
-
-    await update.message.reply_text(
-        "Do you have any descriptions?",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
-    )
-
-    return DESCRIPTION
-
-
-async def task_description(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['values']['description'] = update.message.text
 
     text = ""
 
@@ -229,32 +234,44 @@ async def task_description(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def data_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     # Create the tuple "params" with all the parameters inserted by the user
+    values = context.user_data['values']
     params = (
-        context.user_data['values']['summary'],
-        context.user_data['values']['date'],
-        context.user_data['values']['frequency'],
-        context.user_data['values']['description'],
+        values['summary'],
+        values['date'],
+        values['description'] if 'description' in values else "NULL"
 
     )
-    sql_command = "INSERT INTO tasks VALUES (NULL, ?, ?, ?, ?);" 
+    sql_command = "INSERT INTO tasks VALUES (NULL, ?, ?, ?);" 
     crsr.execute(sql_command, params)
     conn.commit()
 
-    # If at least 1 row is affected by the query we send specific messages
-    if crsr.rowcount < 1:
-        text = "OOps! something wrong, please try again"
-        await update.message.reply_text(text)
-    else:
-        text = f"Good news, {context.user_data['values']['summary']} successfully inserted!"
-        await update.message.reply_text(text)
-        del context.user_data['values']
-
     await update.message.reply_text(
-        "Task successfully added.",
-        reply_markup=ReplyKeyboardRemove(),
+        f"{values['summary']} successfully added.",
+        reply_markup=ReplyKeyboardMarkup(main_keyboard, one_time_keyboard=True, resize_keyboard=True),
     )
 
+    del context.user_data['values']
+
     return ConversationHandler.END
+
+async def cancel_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Skips the photo and asks for a location."""
+
+    await update.message.reply_text(
+        "Request cancelled",
+        reply_markup=ReplyKeyboardMarkup(main_keyboard, one_time_keyboard=True, resize_keyboard=True),
+    )
+
+    del context.user_data['values']
+
+    return ConversationHandler.END
+
+async def delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    
+    current_id = update.message.message_id + 1
+
+    for message_id in range(context.user_data['message_id'],current_id):
+        await context.bot.deleteMessage(message_id = message_id, chat_id = update.message.chat_id)
 
 
 def main() -> None:
@@ -267,18 +284,25 @@ def main() -> None:
         entry_points=[CommandHandler("insert", insert)],
         states={
             SUMMARY : [MessageHandler(filters.TEXT & ~filters.COMMAND, task_summary)],
-            DATE : [MessageHandler(filters.TEXT & ~filters.COMMAND, task_date)],
-            FREQUENCY : [MessageHandler(filters.TEXT & ~filters.COMMAND, task_frequency)],
-            DESCRIPTION : [MessageHandler(filters.TEXT & ~filters.COMMAND, task_description)],
-            CONFIRM : [MessageHandler(filters.TEXT & ~filters.COMMAND, data_confirm)],
+            DESCRIPTION : [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, task_description),
+                CommandHandler("skip", description_skip),
+            ],
+            DATE : [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, task_date),
+                
+            ],
+            CONFIRM : [CommandHandler("confirm", data_confirm),],
         },
-        fallbacks=[CommandHandler("timer_stop", timer_stop)],
+        fallbacks=[CommandHandler("cancel", cancel_request)],
     )
 
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("timer_start", timer_start))
     application.add_handler(CommandHandler("timer_stop", timer_stop))
+    application.add_handler(CommandHandler("today", today_tasks))
+    application.add_handler(CommandHandler("clear", delete_message))
 
     # Run the bot until the user presses Ctrl-C
     application.run_polling()
@@ -299,7 +323,6 @@ if __name__ == "__main__":
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         summary VARCHAR(200),
         date VARCHAR(200),
-        frequency CHARACTER(20),
         description VARCHAR(500));"""
     crsr.execute(sql_command)
     print("Tables ready")
