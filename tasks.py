@@ -31,7 +31,7 @@ if __version_info__ < (20, 0, 0, "alpha", 1):
 #     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 # )
 
-with open("config.json", "r") as config_file:
+with open("/root/config.json", "r") as config_file:
     config = json.load(config_file)
     config_file.close()
 
@@ -312,7 +312,7 @@ if __name__ == "__main__":
 
     print("Initializing Database...")
     # Connect to local database
-    db_name = 'db.sqlite'
+    db_name = '/root/db.sqlite'
     conn = sqlite3.connect(db_name, check_same_thread=False)
     # Create the cursor
     crsr = conn.cursor() 
