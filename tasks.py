@@ -38,20 +38,11 @@ with open("/root/config.json", "r") as config_file:
 
 SUMMARY, DESCRIPTION, DATE, CONFIRM = range(4)
 
-main_keyboard = [
-        ["/timer_start", "/timer_stop"],
-        ["/insert", "/update", "/delete", "/query"],
-        ["/today", "/clear", "/cancel", "/help"]
-    ]
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Starts the conversation"""
 
     await update.message.reply_text(
-        "Need help? use /help button",
-        reply_markup=ReplyKeyboardMarkup(
-            main_keyboard, one_time_keyboard=True, resize_keyboard=True
-        ),
+        "Need help? use /help button"
     )
 
 
@@ -247,8 +238,7 @@ async def data_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     conn.commit()
 
     await update.message.reply_text(
-        f"{values['summary']} successfully added.",
-        reply_markup=ReplyKeyboardMarkup(main_keyboard, one_time_keyboard=True, resize_keyboard=True),
+        f"{values['summary']} successfully added."
     )
 
     del context.user_data['values']
@@ -259,8 +249,7 @@ async def cancel_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     """Skips the photo and asks for a location."""
 
     await update.message.reply_text(
-        "Request cancelled",
-        reply_markup=ReplyKeyboardMarkup(main_keyboard, one_time_keyboard=True, resize_keyboard=True),
+        "Request cancelled"
     )
 
     del context.user_data['values']
