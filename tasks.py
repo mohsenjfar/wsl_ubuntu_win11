@@ -1,15 +1,16 @@
-"""
-Simple Bot to send timed Telegram messages.
-
-Note:
-To use the JobQueue, you must install PTB via
-`pip install python-telegram-bot[job-queue]`
-"""
-
 import logging
 import json
-from datetime import datetime, timedelta
-
+from datetime import date, time, datetime, timedelta
+import sqlite3
+from telegram import ReplyKeyboardMarkup, Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+)
 from telegram import __version__ as TG_VER
 
 try:
@@ -23,44 +24,62 @@ if __version_info__ < (20, 0, 0, "alpha", 1):
         f"{TG_VER} version of this example, "
         f"visit https://docs.python-telegram-bot.org/en/v{TG_VER}/examples.html"
     )
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, JobQueue
+
 
 # Enable logging
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+# logging.basicConfig(
+#     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+# )
 
-with open("/root/config.json", "r") as config_file:
+with open("config.json", "r") as config_file:
     config = json.load(config_file)
     config_file.close()
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Sends explanation on how to use the bot."""
-    await update.message.reply_text("Use /start_timer to start pomodoro and /stop_timer to stop pomodoro")
+SUMMARY, DESCRIPTION, DATE, CONFIRM = range(4)
+
+main_keyboard = [
+        ["/timer_start", "/timer_stop"],
+        ["/insert", "/update", "/delete", "/query"],
+        ["/today", "/clear", "/cancel", "/help"]
+    ]
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Starts the conversation"""
+
+    await update.message.reply_text(
+        "Need help? use /help button",
+        reply_markup=ReplyKeyboardMarkup(
+            main_keyboard, one_time_keyboard=True, resize_keyboard=True
+        ),
+    )
+
+
+def return_time():
+    start_time = datetime.combine(date.today(), time(7,0))
+    end_time = datetime.combine(date.today(), time(22,0))
+    periods = [25,5,25,5,25,5,25,15]
+    states = {
+        25:"Session started", 
+        5:"Short break", 
+        15:"Long break\nDon't forget to drink water"
+    }
+    times = {}
+    while start_time < end_time:
+        for p in periods:
+            times[start_time.strftime('%H:%M')] = states[p]
+            start_time += timedelta(minutes=p)
+    return times
 
 
 async def notification(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send the notification."""
     
     job = context.job
-    now = datetime.now().strftime('%Y-%m-%d %H:%M')
-    next_time = job.data['next_time'].strftime('%Y-%m-%d %H:%M')
 
-    if job.data['state'] in [1,3,5,7] and now == next_time:
-        await context.bot.send_message(job.chat_id, text="Session started")
-        job.data['next_time'] += timedelta(minutes=25)
-        job.data['state'] += 1
-    
-    elif job.data['state'] in [2,4,6] and now == next_time:
-        await context.bot.send_message(job.chat_id, text="Short break")
-        job.data['next_time'] += timedelta(minutes=5)
-        job.data['state'] += 1
+    now  = datetime.now().strftime('%H:%M')
 
-    elif job.data['state'] == 8 and now == next_time:
-        await context.bot.send_message(job.chat_id, text="Long break\nDon't forget to drink water!")
-        job.data['next_time'] += timedelta(minutes=15)
-        job.data['state'] = 1
+    if now in job.data:
+        await context.bot.send_message(job.chat_id, text=job.data[now])
+
 
 def remove_job_if_exists(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Remove job with given name. Returns whether job was removed."""
@@ -73,28 +92,24 @@ def remove_job_if_exists(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
     return True
 
 
-async def start_timer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Add a job to the queue."""
+async def timer_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+
+    data = return_time()
+
     chat_id = update.effective_message.chat_id
 
-    try:
+    job_removed = remove_job_if_exists(str(chat_id), context)
 
-        job_removed = remove_job_if_exists(str(chat_id), context)
-        
-        data = {'next_time':datetime.now(), 'state':1}
+    context.job_queue.run_repeating(notification, 60, chat_id=chat_id, name=str(chat_id), data=data, first=1)
 
-        context.job_queue.run_repeating(notification, 60, chat_id=chat_id, name=str(chat_id), data=data, first=1)
+    text = "Timer successfully set!"
+    if job_removed:
+        text += " Old one was removed."
 
-        text = "Timer successfully set!"
-        if job_removed:
-            text += " Old one was removed."
-        await update.effective_message.reply_text(text)
-
-    except (IndexError, ValueError):
-        await update.effective_message.reply_text("Usage: /timer_start")
+    await update.message.reply_text(text)
 
 
-async def stop_timer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def timer_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Remove the job if the user changed their mind."""
     chat_id = update.message.chat_id
     job_removed = remove_job_if_exists(str(chat_id), context)
@@ -102,19 +117,214 @@ async def stop_timer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(text)
 
 
-def main() -> None:
-    """Run bot."""
-    # Create the Application and pass it your bot's token.
-    application = Application.builder().token(config["API_TOKEN"]).build()
+async def today_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    
+    job = context.job
+    
+    context.user_data['message_id'] = update.message.message_id
+    
+    date = datetime.now().strftime('%Y-%m-%d%')
+    sql_command = "SELECT * FROM tasks WHERE date LIKE ?"
+    crsr.execute(sql_command, (date,))
+    tasks = crsr.fetchall()
+    if tasks:
+        for task in tasks:
+            text = f"Summary: {task[1]}\nDate: {task[2]}\nDescription: {task[3]}"
+            await update.effective_message.reply_text(text)
+    else:
+        await update.effective_message.reply_text("Nothing to present!")
 
-    # on different commands - answer in Telegram
-    application.add_handler(CommandHandler(["start", "help"], start))
-    application.add_handler(CommandHandler("start_timer", start_timer))
-    application.add_handler(CommandHandler("stop_timer", stop_timer))
+
+async def insert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+
+    reply_keyboard = [
+        ["/cancel"]
+    ]
+
+    context.user_data['values'] = {}
+
+    await update.message.reply_text(
+        "Please send me a summary for your task:",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
+    )
+
+    return SUMMARY
+
+
+async def task_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Stores the info about the user and ends the conversation."""
+    
+    context.user_data['values']['summary'] = update.message.text
+
+    reply_keyboard = [
+        ["/skip", "/cancel"]
+    ]
+
+    await update.message.reply_text(
+        "Do you have any descriptions?",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
+    )
+
+    return DESCRIPTION
+
+async def task_description(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Stores the info about the user and ends the conversation."""
+    
+    context.user_data['values']['description'] = update.message.text
+
+    reply_keyboard = [
+        ["/cancel"]
+    ]
+
+    await update.message.reply_text(
+        "Please send me date and time",
+        reply_markup=ReplyKeyboardMarkup(
+            reply_keyboard, 
+            one_time_keyboard=True, 
+            resize_keyboard=True,
+            input_field_placeholder="yyyy-mm-dd hh:mm frq"
+        ),
+    )
+
+    return DATE
+
+async def description_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Skips the location and asks for info about the user."""
+
+    reply_keyboard = [
+        ["/cancel"]
+    ]
+
+    await update.message.reply_text(
+        "Please send me date and time",
+        reply_markup=ReplyKeyboardMarkup(
+            reply_keyboard, 
+            one_time_keyboard=True, 
+            resize_keyboard=True,
+            input_field_placeholder="yyyy-mm-dd hh:mm frq"
+        ),
+    )
+
+    return DATE
+
+
+async def task_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+
+    """Stores the info about the user and ends the conversation."""
+    
+    context.user_data['values']['date'] = update.message.text
+
+    text = ""
+
+    for value in context.user_data['values']:
+        text += f"{value}: {context.user_data['values'][value]}\n"
+
+    reply_keyboard = [
+        ["/confirm","/cancel"]
+    ]
+
+    await update.message.reply_text(
+        "Here is the data you gave me, all ok?\n\n" + text,
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
+    )
+
+    return CONFIRM
+
+
+async def data_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+
+    # Create the tuple "params" with all the parameters inserted by the user
+    values = context.user_data['values']
+    params = (
+        values['summary'],
+        values['date'],
+        values['description'] if 'description' in values else "NULL"
+
+    )
+    sql_command = "INSERT INTO tasks VALUES (NULL, ?, ?, ?);" 
+    crsr.execute(sql_command, params)
+    conn.commit()
+
+    await update.message.reply_text(
+        f"{values['summary']} successfully added.",
+        reply_markup=ReplyKeyboardMarkup(main_keyboard, one_time_keyboard=True, resize_keyboard=True),
+    )
+
+    del context.user_data['values']
+
+    return ConversationHandler.END
+
+async def cancel_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Skips the photo and asks for a location."""
+
+    await update.message.reply_text(
+        "Request cancelled",
+        reply_markup=ReplyKeyboardMarkup(main_keyboard, one_time_keyboard=True, resize_keyboard=True),
+    )
+
+    del context.user_data['values']
+
+    return ConversationHandler.END
+
+async def delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    
+    current_id = update.message.message_id + 1
+
+    for message_id in range(context.user_data['message_id'],current_id):
+        await context.bot.deleteMessage(message_id = message_id, chat_id = update.message.chat_id)
+
+
+def main() -> None:
+    """Run the bot."""
+    # Create the Application and pass it your bot's token.
+    application = Application.builder().token("6072917486:AAGWJupGrAGKvGBUqVtwCMKjryugaNY9o2E").build()
+
+    # Add conversation handler with the states GENDER, PHOTO, LOCATION and BIO
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("insert", insert)],
+        states={
+            SUMMARY : [MessageHandler(filters.TEXT & ~filters.COMMAND, task_summary)],
+            DESCRIPTION : [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, task_description),
+                CommandHandler("skip", description_skip),
+            ],
+            DATE : [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, task_date),
+                
+            ],
+            CONFIRM : [CommandHandler("confirm", data_confirm),],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_request)],
+    )
+
+    application.add_handler(conv_handler)
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("timer_start", timer_start))
+    application.add_handler(CommandHandler("timer_stop", timer_stop))
+    application.add_handler(CommandHandler("today", today_tasks))
+    application.add_handler(CommandHandler("clear", delete_message))
 
     # Run the bot until the user presses Ctrl-C
     application.run_polling()
 
 
 if __name__ == "__main__":
+
+    print("Initializing Database...")
+    # Connect to local database
+    db_name = 'db.sqlite'
+    conn = sqlite3.connect(db_name, check_same_thread=False)
+    # Create the cursor
+    crsr = conn.cursor() 
+    print("Connected to the database")
+
+    # Command that creates the "oders" table 
+    sql_command = """CREATE TABLE IF NOT EXISTS tasks ( 
+        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        summary VARCHAR(200),
+        date VARCHAR(200),
+        description VARCHAR(500));"""
+    crsr.execute(sql_command)
+    print("Tables ready")
+
     main()

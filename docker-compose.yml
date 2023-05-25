@@ -6,3 +6,4 @@ services:
     container_name: taskerbot
     volumes:
         - "./config.json:/root/config.json"
+        - "./db.sqlite:/root/db.sqlite"
