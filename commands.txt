@@ -1,8 +1,0 @@
-start_timer - Pomodoro start
-stop_timer - Pomodoro stop
-insert - Add task
-select - Query all tasks
-update - Update task
-delete - Delete task
-tasker_start - Tasker start
-tasker_stop - Tasker stop

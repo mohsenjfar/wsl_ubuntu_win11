@@ -1,0 +1,9 @@
+timer_start - Pomodoro start
+timer_stop - Pomodoro stop
+insert - Add task
+update - Update task
+delete - Delete task
+query - Searsh tasks
+today - Today tasks
+cancel - Cancel current job
+help - Help

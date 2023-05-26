@@ -5,4 +5,5 @@ services:
     restart: unless-stopped
     container_name: taskerbot
     volumes:
-        - "./config.json:/config.json"
+        - "./telegram/config.json:/taskerbot/telegram/config.json"
+        - "./db.sqlite3:/taskerbot/db.sqlite3"
