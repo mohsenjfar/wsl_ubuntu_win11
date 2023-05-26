@@ -27,7 +27,7 @@ if __version_info__ < (20, 0, 0, "alpha", 1):
 
 # from asgiref.sync import async_to_sync
 import sys, os, django
-sys.path.append('/root/taskerbot')
+sys.path.append('/code')
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "backend.settings")
 os.environ["DJANGO_ALLOW_ASYNC_UNSAFE"] = "true"
 django.setup()
@@ -40,7 +40,7 @@ from tasks.models import Task
 # )
 
 
-with open("config.json", "r") as config_file:
+with open("/code/telegram/config.json", "r") as config_file:
     config = json.load(config_file)
     config_file.close()
 

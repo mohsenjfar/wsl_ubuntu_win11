@@ -1,9 +1,10 @@
 version: "3"
 services:
   tasks:
-    image: mohsenjfar/taskerbot:latest
+    # image: mohsenjfar/taskerbot:latest
+    image: taskerbot:latest
     restart: unless-stopped
     container_name: taskerbot
     volumes:
-        - "./telegram/config.json:/taskerbot/telegram/config.json"
-        - "./db.sqlite3:/taskerbot/db.sqlite3"
+        - "./telegram/config.json:/code/telegram/config.json"
+        - "./db.sqlite3:/code/db.sqlite3"

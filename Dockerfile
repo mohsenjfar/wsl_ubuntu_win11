@@ -1,11 +1,12 @@
-FROM python:3.9.16-slim-buster
+FROM python:3
 
-COPY /backend /taskerbot/backend
-COPY /tasks /taskerbot/tasks
-COPY /telegeram /taskerbot/telegram
-COPY requirements.txt /taskerbot/requirements.txt
-COPY manage.py /taskerbot/manage.py
+COPY /backend /code/backend
+COPY /tasks /code/tasks
+COPY /telegram /code/telegram
+COPY requirements.txt /code/requirements.txt
+COPY manage.py /code/manage.py
 
-RUN pip3 install -r /taskerbot/requirements.txt
+RUN pip3 install -r /code/requirements.txt
 
-CMD python /taskerbot/telegram/bot.py
+CMD python /code/telegram/bot.py
+
