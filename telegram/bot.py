@@ -1,6 +1,7 @@
 import logging
 import json
 from datetime import date, time, datetime, timedelta
+import pytz
 import pandas as pd
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import (
@@ -75,7 +76,7 @@ async def notification(context: ContextTypes.DEFAULT_TYPE) -> None:
     
     job = context.job
 
-    now  = datetime.now().strftime('%H:%M')
+    now  = datetime.now(pytz.timezone('Asia/Tehran')).strftime('%H:%M')
 
     if now in job.data:
         await context.bot.send_message(job.chat_id, text=job.data[now])
