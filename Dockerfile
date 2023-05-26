@@ -1,5 +1,12 @@
-FROM python:3.9.16-slim-buster
-COPY requirements.txt /root/requirements.txt
-COPY tasks.py /root/tasks.py
-RUN pip3 install -r /root/requirements.txt
-CMD python /root/tasks.py
+FROM python:3
+
+COPY /backend /code/backend
+COPY /tasks /code/tasks
+COPY /telegram /code/telegram
+COPY requirements.txt /code/requirements.txt
+COPY manage.py /code/manage.py
+
+RUN pip3 install -r /code/requirements.txt
+
+CMD python /code/telegram/bot.py
+

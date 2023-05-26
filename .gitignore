@@ -1,6 +1,7 @@
 .venv
 .env
 __pycache__
-config.json
-*.sqlite
+token.json
 *.sqlite3
+*.sqlite
+config.json

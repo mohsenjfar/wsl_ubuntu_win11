@@ -1,8 +1,7 @@
 import logging
 import json
 from datetime import date, time, datetime, timedelta
-import pytz
-import sqlite3
+import pandas as pd
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import (
     Application,
@@ -26,13 +25,22 @@ if __version_info__ < (20, 0, 0, "alpha", 1):
         f"visit https://docs.python-telegram-bot.org/en/v{TG_VER}/examples.html"
     )
 
+# from asgiref.sync import async_to_sync
+import sys, os, django
+sys.path.append('/code')
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "backend.settings")
+os.environ["DJANGO_ALLOW_ASYNC_UNSAFE"] = "true"
+django.setup()
+
+from tasks.models import Task
 
 # Enable logging
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+# logging.basicConfig(
+#     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+# )
 
-with open("/root/config.json", "r") as config_file:
+
+with open("/code/telegram/config.json", "r") as config_file:
     config = json.load(config_file)
     config_file.close()
 
@@ -67,7 +75,7 @@ async def notification(context: ContextTypes.DEFAULT_TYPE) -> None:
     
     job = context.job
 
-    now  = datetime.now(pytz.timezone("Asia/Tehran")).strftime('%H:%M')
+    now  = datetime.now().strftime('%H:%M')
 
     if now in job.data:
         await context.bot.send_message(job.chat_id, text=job.data[now])
@@ -114,17 +122,19 @@ async def today_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     job = context.job
     
     context.user_data['message_id'] = update.message.message_id
-    
-    date = datetime.now().strftime('%Y-%m-%d%')
-    sql_command = "SELECT * FROM tasks WHERE date LIKE ?"
-    crsr.execute(sql_command, (date,))
-    tasks = crsr.fetchall()
+
+    today = datetime.combine(date.today(), time(23,59))
+    tasks = Task.objects.filter(due__lte = today).order_by('due')
+
     if tasks:
         for task in tasks:
-            text = f"Summary: {task[1]}\nDate: {task[2]}\nDescription: {task[3]}"
+            summary = task.summary
+            dt = datetime.strftime(task.due, '%Y-%m-%d %H:%M')
+            description = f'\nDescription: {task.description}' if task.description else ''
+            text = f"Summary: {summary}\nDate: {dt}" + description
             await update.effective_message.reply_text(text)
     else:
-        await update.effective_message.reply_text("Nothing to present!")
+        await update.effective_message.reply_text("All done!")
 
 
 async def insert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -227,15 +237,13 @@ async def data_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
     # Create the tuple "params" with all the parameters inserted by the user
     values = context.user_data['values']
-    params = (
-        values['summary'],
-        values['date'],
-        values['description'] if 'description' in values else "NULL"
 
+    Task.objects.create(
+        summary = values['summary'],
+        due = values['date'],
+        freq = values['freq'],
+        description = values['description'] if 'description' in values else "NULL"
     )
-    sql_command = "INSERT INTO tasks VALUES (NULL, ?, ?, ?);" 
-    crsr.execute(sql_command, params)
-    conn.commit()
 
     await update.message.reply_text(
         f"{values['summary']} successfully added."
@@ -267,7 +275,7 @@ async def delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 def main() -> None:
     """Run the bot."""
     # Create the Application and pass it your bot's token.
-    application = Application.builder().token(config["API_TOKEN"]).build()
+    application = Application.builder().token(config["TEST_TOKEN"]).build()
 
     # Add conversation handler with the states GENDER, PHOTO, LOCATION and BIO
     conv_handler = ConversationHandler(
@@ -299,22 +307,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-
-    print("Initializing Database...")
-    # Connect to local database
-    db_name = '/root/db.sqlite'
-    conn = sqlite3.connect(db_name, check_same_thread=False)
-    # Create the cursor
-    crsr = conn.cursor() 
-    print("Connected to the database")
-
-    # Command that creates the "oders" table 
-    sql_command = """CREATE TABLE IF NOT EXISTS tasks ( 
-        id INTEGER PRIMARY KEY AUTOINCREMENT, 
-        summary VARCHAR(200),
-        date VARCHAR(200),
-        description VARCHAR(500));"""
-    crsr.execute(sql_command)
-    print("Tables ready")
-
     main()
