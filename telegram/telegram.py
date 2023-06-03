@@ -97,6 +97,7 @@ class Telegram(RPCHandler):
     """  This class handles all telegram communication """
 
     def __init__(self, rpc: RPC, config: Config) -> None:
+        
         """
         Init the Telegram call, and init the super class RPCHandler
         :param rpc: instance of RPC Helper class
