@@ -2,6 +2,7 @@ version: "3"
 services:
   tasks:
     image: mohsenjfar/taskerbot:latest
+    # build: .
     restart: unless-stopped
     container_name: taskerbot
     volumes:

@@ -2,7 +2,6 @@ import logging
 import json
 from datetime import date, time, datetime, timedelta
 import pytz
-import pandas as pd
 from telegram import (
     Update,
     ReplyKeyboardMarkup,
@@ -35,7 +34,7 @@ if __version_info__ < (20, 0, 0, "alpha", 1):
 
 # from asgiref.sync import async_to_sync
 import sys, os, django
-sys.path.append('/code/taskerbot')
+sys.path.append('/code/')
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "backend.settings")
 os.environ["DJANGO_ALLOW_ASYNC_UNSAFE"] = "true"
 django.setup()
@@ -49,10 +48,9 @@ from django.utils import timezone
 # )
 
 
-with open("/code/config.json", "r") as config_file:
+with open("/code/telegram/config.json", "r") as config_file:
     config = json.load(config_file)
     config_file.close()
-
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
