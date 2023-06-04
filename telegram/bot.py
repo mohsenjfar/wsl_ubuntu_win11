@@ -35,7 +35,7 @@ if __version_info__ < (20, 0, 0, "alpha", 1):
 
 # from asgiref.sync import async_to_sync
 import sys, os, django
-sys.path.append('/root/taskerbot')
+sys.path.append('/code/taskerbot')
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "backend.settings")
 os.environ["DJANGO_ALLOW_ASYNC_UNSAFE"] = "true"
 django.setup()
@@ -49,7 +49,7 @@ from django.utils import timezone
 # )
 
 
-with open("config.json", "r") as config_file:
+with open("/code/config.json", "r") as config_file:
     config = json.load(config_file)
     config_file.close()
 
