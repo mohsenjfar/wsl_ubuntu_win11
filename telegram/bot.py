@@ -3,7 +3,13 @@ import json
 from datetime import date, time, datetime, timedelta
 import pytz
 import pandas as pd
-from telegram import ReplyKeyboardMarkup, Update, ReplyKeyboardRemove
+from telegram import (
+    Update,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -11,6 +17,7 @@ from telegram.ext import (
     ConversationHandler,
     MessageHandler,
     filters,
+    CallbackQueryHandler,
 )
 from telegram import __version__ as TG_VER
 
@@ -34,6 +41,7 @@ os.environ["DJANGO_ALLOW_ASYNC_UNSAFE"] = "true"
 django.setup()
 
 from tasks.models import Task
+from django.utils import timezone
 
 # Enable logging
 # logging.basicConfig(
@@ -46,8 +54,12 @@ with open("config.json", "r") as config_file:
     config_file.close()
 
 
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Starts the conversation"""
+
+    chat_id = update.effective_message.chat_id
+
+    context.job_queue.run_repeating(due_check, 60, chat_id=chat_id, name=str(chat_id), first=1)
 
     await update.message.reply_text(
         "Need help? use /help button"
@@ -239,8 +251,8 @@ async def data_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
     Task.objects.create(
         summary = values['summary'],
-        due = datetime.strptime(values['date'], '%Y-%m-%d %H:%M'),
-        freq = values['freq'] if 'freq' in values else None,
+        due = timezone.make_aware(datetime.strptime(values['date'], '%Y-%m-%d %H:%M') - timedelta(hours=3.5)),
+        freq = values['freq'] if 'freq' in values else 0,
         description = values['description'] if 'description' in values else None
     )
 
@@ -259,7 +271,7 @@ QUERY = range(1)
 def return_task_values(task):
     id = task.id
     summary = task.summary
-    dt = datetime.strftime(task.due, '%Y-%m-%d %H:%M')
+    dt = datetime.strftime(task.due + timedelta(hours=3.5), '%Y-%m-%d %H:%M')
     description = f'\nDescription: {task.description}'
     text = f"Summary: {summary}\nDate: {dt}" + description
     return text
@@ -283,6 +295,7 @@ async def select(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     return QUERY
 
+
 async def tasks_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     
     statement = f"SELECT * FROM 'tasks_task' WHERE {update.message.text}" 
@@ -300,18 +313,36 @@ async def tasks_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     return ConversationHandler.END
 
+
+async def query_buttons(tasks, update):
+
+    for task in tasks:
+        text = return_task_values(task)
+        keyboard = [
+            [
+                InlineKeyboardButton("Done", callback_data=f"done:{task.id}"),
+                InlineKeyboardButton("Delete", callback_data=f"delete:{task.id}"),
+            ],
+            [
+                InlineKeyboardButton("Add resource", callback_data=f"addrsc:{task.id}"),
+            ],
+        ]
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.effective_message.reply_text(text, reply_markup=reply_markup)
+
+
 async def overdue_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     job = context.job
     
     context.user_data['message_id'] = update.message.message_id
     
-    tasks = Task.objects.filter(due__lte = datetime.now()).order_by('due')
+    tasks = Task.objects.filter(due__lte = timezone.now()).order_by('due')
 
     if tasks:
-        for task in tasks:
-            text = return_task_values(task)
-            await update.effective_message.reply_text(text, reply_markup=ReplyKeyboardRemove())
+        await query_buttons(tasks, update)
     else:
         await update.effective_message.reply_text("All done!", reply_markup=ReplyKeyboardRemove())
     
@@ -324,14 +355,12 @@ async def today_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     
     context.user_data['message_id'] = update.message.message_id
 
-    start_time = datetime.combine(date.today(), time(0,0))
-    end_time = datetime.combine(date.today() + timedelta(days=1), time(0,0))
+    start_time = timezone.make_aware(datetime.combine(date.today(), time(0,0)))
+    end_time = timezone.make_aware(datetime.combine(date.today() + timedelta(days=1), time(0,0)))
     tasks = Task.objects.filter(due__gte = start_time, due__lte = end_time).order_by('due')
 
     if tasks:
-        for task in tasks:
-            text = return_task_values(task)
-            await update.effective_message.reply_text(text, reply_markup=ReplyKeyboardRemove())
+        await query_buttons(tasks, update)
     else:
         await update.effective_message.reply_text("All done!", reply_markup=ReplyKeyboardRemove())
 
@@ -344,31 +373,75 @@ async def tommorrow_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     context.user_data['message_id'] = update.message.message_id
 
-    start_time = datetime.combine(date.today() + timedelta(days=1), time(0,0))
-    end_time = datetime.combine(date.today() + timedelta(days=2), time(0,0))
+    start_time = timezone.make_aware(datetime.combine(date.today() + timedelta(days=1), time(0,0)))
+    end_time = timezone.make_aware(datetime.combine(date.today() + timedelta(days=2), time(0,0)))
     tasks = Task.objects.filter(due__gte = start_time, due__lte = end_time).order_by('due')
 
     if tasks:
-        for task in tasks:
-            text = return_task_values(task)
-            await update.effective_message.reply_text(text, reply_markup=ReplyKeyboardRemove())
+        await query_buttons(tasks, update)
     else:
         await update.effective_message.reply_text("All done!", reply_markup=ReplyKeyboardRemove())
     
     return ConversationHandler.END
+
 
 async def all_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     tasks = Task.objects.all()
 
     if tasks:
-        for task in tasks:
-            text = return_task_values(task)
-            await update.effective_message.reply_text(text, reply_markup=ReplyKeyboardRemove())
+        await query_buttons(tasks, update)
     else:
         await update.effective_message.reply_text("All done!", reply_markup=ReplyKeyboardRemove())
     
     return ConversationHandler.END
+
+
+async def due_check(context: ContextTypes.DEFAULT_TYPE) -> None:
+
+    job = context.job
+
+    now  = timezone.now()
+    then = timezone.now() + timezone.timedelta(minutes=1)
+
+    tasks = Task.objects.filter(due__range = (now, then))
+
+    if tasks:
+        for task in tasks:
+            text = return_task_values(task)
+            keyboard = [
+                [
+                    InlineKeyboardButton("Done", callback_data=f"done:{task.id}"),
+                    InlineKeyboardButton("Delete", callback_data=f"delete:{task.id}"),
+                ],
+                [
+                    InlineKeyboardButton("Add resource", callback_data=f"addrsc:{task.id}"),
+                ],
+            ]
+
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await context.bot.send_message(job.chat_id, text=text, reply_markup=reply_markup)
+
+
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Parses the CallbackQuery and updates the message text."""
+    
+    query = update.callback_query
+
+    await query.answer()
+
+    data = query.data.split(':')
+
+    if data[0] == 'delete':
+        Task.objects.get(id = data[1]).delete()
+        await query.edit_message_text(text="Task successfully deleted")
+    elif data[0] == 'done':
+        task = Task.objects.get(id = data[1])
+        task.due += timedelta(days=task.freq)
+        task.save()
+        await query.edit_message_text(text="Task completed")
+
 
 async def delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     
@@ -433,6 +506,7 @@ def main() -> None:
 
     application.add_handler(insert_handler)
     application.add_handler(select_handler)
+    application.add_handler(CallbackQueryHandler(button))
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("timer_start", timer_start))
     application.add_handler(CommandHandler("timer_stop", timer_stop))
