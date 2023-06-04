@@ -1,35 +1,15 @@
-#!/usr/bin/env python
-# pylint: disable=unused-argument, wrong-import-position
-# This program is dedicated to the public domain under the CC0 license.
-
-"""
-First, a few callback functions are defined. Then, those functions are passed to
-the Application and registered at their respective places.
-Then, the bot is started and runs until we press Ctrl-C on the command line.
-
-Usage:
-Example of a bot-user conversation using ConversationHandler.
-Send /start to initiate the conversation.
-Press Ctrl-C on the command line or send a signal to the process to stop the
-bot.
-"""
-
 import logging
-
-from telegram import __version__ as TG_VER
-
-try:
-    from telegram import __version_info__
-except ImportError:
-    __version_info__ = (0, 0, 0, 0, 0)  # type: ignore[assignment]
-
-if __version_info__ < (20, 0, 0, "alpha", 5):
-    raise RuntimeError(
-        f"This example is not compatible with your current PTB version {TG_VER}. To view the "
-        f"{TG_VER} version of this example, "
-        f"visit https://docs.python-telegram-bot.org/en/v{TG_VER}/examples.html"
-    )
-from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
+import json
+from datetime import date, time, datetime, timedelta
+import pytz
+import pandas as pd
+from telegram import (
+    Update,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -37,111 +17,415 @@ from telegram.ext import (
     ConversationHandler,
     MessageHandler,
     filters,
+    CallbackQueryHandler,
 )
+from telegram import __version__ as TG_VER
+
+try:
+    from telegram import __version_info__
+except ImportError:
+    __version_info__ = (0, 0, 0, 0, 0)  # type: ignore[assignment]
+
+if __version_info__ < (20, 0, 0, "alpha", 1):
+    raise RuntimeError(
+        f"This example is not compatible with your current PTB version {TG_VER}. To view the "
+        f"{TG_VER} version of this example, "
+        f"visit https://docs.python-telegram-bot.org/en/v{TG_VER}/examples.html"
+    )
+
+# from asgiref.sync import async_to_sync
+import sys, os, django
+sys.path.append('/root/taskerbot')
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "backend.settings")
+os.environ["DJANGO_ALLOW_ASYNC_UNSAFE"] = "true"
+django.setup()
+
+from tasks.models import Task
 
 # Enable logging
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
-logger = logging.getLogger(__name__)
-
-GENDER, PHOTO, LOCATION, BIO = range(4)
+# logging.basicConfig(
+#     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+# )
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Starts the conversation and asks the user about their gender."""
-    reply_keyboard = [["Boy", "Girl", "Other"]]
+with open("config.json", "r") as config_file:
+    config = json.load(config_file)
+    config_file.close()
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Starts the conversation"""
 
     await update.message.reply_text(
-        "Hi! My name is Professor Bot. I will hold a conversation with you. "
-        "Send /cancel to stop talking to me.\n\n"
-        "Are you a boy or a girl?",
+        "Need help? use /help button"
+    )
+
+
+def return_time():
+    start_time = datetime.combine(date.today(), time(7,0))
+    end_time = datetime.combine(date.today(), time(22,0))
+    periods = [25,5,25,5,25,5,25,15]
+    states = {
+        25:"Session started", 
+        5:"Short break", 
+        15:"Long break\nDon't forget to drink water"
+    }
+    times = {}
+    while start_time < end_time:
+        for p in periods:
+            times[start_time.strftime('%H:%M')] = states[p]
+            start_time += timedelta(minutes=p)
+    return times
+
+
+async def notification(context: ContextTypes.DEFAULT_TYPE) -> None:
+    
+    job = context.job
+
+    now  = datetime.now(pytz.timezone('Asia/Tehran')).strftime('%H:%M')
+
+    if now in job.data:
+        await context.bot.send_message(job.chat_id, text=job.data[now])
+
+
+def remove_job_if_exists(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Remove job with given name. Returns whether job was removed."""
+
+    current_jobs = context.job_queue.get_jobs_by_name(name)
+    if not current_jobs:
+        return False
+    for job in current_jobs:
+        job.schedule_removal()
+    return True
+
+
+async def timer_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+
+    data = return_time()
+
+    chat_id = update.effective_message.chat_id
+
+    job_removed = remove_job_if_exists(str(chat_id), context)
+
+    context.job_queue.run_repeating(notification, 60, chat_id=chat_id, name=str(chat_id), data=data, first=1)
+
+    text = "Timer successfully set!"
+    if job_removed:
+        text += " Old one was removed."
+
+    await update.message.reply_text(text)
+
+
+async def timer_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Remove the job if the user changed their mind."""
+    chat_id = update.message.chat_id
+    job_removed = remove_job_if_exists(str(chat_id), context)
+    text = "Timer successfully cancelled!" if job_removed else "You have no active timer."
+    await update.message.reply_text(text)
+
+SUMMARY, DESCRIPTION, DATE, FREQ, CONFIRM = range(5)
+
+async def insert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+
+    context.user_data['values'] = {}
+
+    await update.message.reply_text(
+        "Task summary:"
+    )
+
+    return SUMMARY
+
+
+async def task_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    
+    context.user_data['values']['summary'] = update.message.text
+
+    reply_keyboard = [
+        ["/no_description"]
+    ]
+
+    await update.message.reply_text(
+        "Task description:",
         reply_markup=ReplyKeyboardMarkup(
-            reply_keyboard, one_time_keyboard=True, input_field_placeholder="Boy or Girl?"
+            reply_keyboard, 
+            one_time_keyboard=True, 
+            resize_keyboard=True
         ),
     )
 
-    return GENDER
+    return DESCRIPTION
 
+async def task_description(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    
+    context.user_data['values']['description'] = update.message.text
 
-async def gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Stores the selected gender and asks for a photo."""
-    user = update.message.from_user
-    logger.info("Gender of %s: %s", user.first_name, update.message.text)
     await update.message.reply_text(
-        "I see! Please send me a photo of yourself, "
-        "so I know what you look like, or send /skip if you don't want to.",
-        reply_markup=ReplyKeyboardRemove(),
+        "Task due time (yyyy-mm-dd hh:mm):",
     )
 
-    return PHOTO
+    return DATE
 
+async def description_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
-async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Stores the photo and asks for a location."""
-    user = update.message.from_user
-    photo_file = await update.message.photo[-1].get_file()
-    await photo_file.download_to_drive("user_photo.jpg")
-    logger.info("Photo of %s: %s", user.first_name, "user_photo.jpg")
     await update.message.reply_text(
-        "Gorgeous! Now, send me your location please, or send /skip if you don't want to."
+        "Task due time (yyyy-mm-dd hh:mm):"
     )
 
-    return LOCATION
+    return DATE
 
 
-async def skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Skips the photo and asks for a location."""
-    user = update.message.from_user
-    logger.info("User %s did not send a photo.", user.first_name)
+async def task_due(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    
+    context.user_data['values']['date'] = update.message.text
+
+    reply_keyboard = [
+        ["/no_frequency"]
+    ]
+
     await update.message.reply_text(
-        "I bet you look great! Now, send me your location please, or send /skip."
+        "Task frequency in days",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
     )
 
-    return LOCATION
+    return FREQ
 
+async def task_frequency(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
-async def location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Stores the location and asks for some info about the user."""
-    user = update.message.from_user
-    user_location = update.message.location
-    logger.info(
-        "Location of %s: %f / %f", user.first_name, user_location.latitude, user_location.longitude
-    )
-    await update.message.reply_text(
-        "Maybe I can visit you sometime! At last, tell me something about yourself."
-    )
-
-    return BIO
-
-
-async def skip_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Skips the location and asks for info about the user."""
-    user = update.message.from_user
-    logger.info("User %s did not send a location.", user.first_name)
-    await update.message.reply_text(
-        "You seem a bit paranoid! At last, tell me something about yourself."
-    )
-
-    return BIO
-
-
-async def bio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Stores the info about the user and ends the conversation."""
-    user = update.message.from_user
-    logger.info("Bio of %s: %s", user.first_name, update.message.text)
-    await update.message.reply_text("Thank you! I hope we can talk again some day.")
+    
+    context.user_data['values']['freq'] = int(update.message.text)
+
+    text = ""
+
+    for value in context.user_data['values']:
+        text += f"{value}: {context.user_data['values'][value]}\n"
+
+    reply_keyboard = [
+        ["/confirm"]
+    ]
+
+    await update.message.reply_text(
+        "Confirm data:\n\n" + text,
+        reply_markup=ReplyKeyboardMarkup(
+            reply_keyboard, 
+            one_time_keyboard=True, 
+            resize_keyboard=True
+        ),
+    )
+
+    return CONFIRM
+
+async def frequency_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Skips the location and asks for info about the user."""
+
+    text = ""
+
+    for value in context.user_data['values']:
+        text += f"{value}: {context.user_data['values'][value]}\n"
+
+    reply_keyboard = [
+        ["/confirm"]
+    ]
+
+    await update.message.reply_text(
+        "Confirm data:\n\n" + text,
+        reply_markup=ReplyKeyboardMarkup(
+            reply_keyboard, 
+            one_time_keyboard=True, 
+            resize_keyboard=True
+        ),
+    )
+
+    return CONFIRM
+
+
+async def data_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+
+    # Create the tuple "params" with all the parameters inserted by the user
+    values = context.user_data['values']
+
+    Task.objects.create(
+        summary = values['summary'],
+        due = datetime.strptime(values['date'], '%Y-%m-%d %H:%M'),
+        freq = values['freq'] if 'freq' in values else None,
+        description = values['description'] if 'description' in values else None
+    )
+
+    await update.message.reply_text(
+        f"{values['summary']} successfully inserted.",
+        reply_markup=ReplyKeyboardRemove()
+    )
+
+    del context.user_data['values']
+
+    return ConversationHandler.END
+
+QUERY = range(1)
+
+
+def return_task_values(task):
+    id = task.id
+    summary = task.summary
+    dt = datetime.strftime(task.due, '%Y-%m-%d %H:%M')
+    description = f'\nDescription: {task.description}'
+    text = f"Summary: {summary}\nDate: {dt}" + description
+    return text
+
+
+async def select(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+
+    reply_keyboard = [
+        ["/overdue", "/today"],
+        ["/tommorrow", "/all"]
+    ]
+
+    await update.message.reply_text(
+        "Type query statement or use keyboard shortcuts:",
+        reply_markup=ReplyKeyboardMarkup(
+            reply_keyboard, 
+            one_time_keyboard=True, 
+            resize_keyboard=True
+        ),
+    )
+
+    return QUERY
+
+async def tasks_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    
+    statement = f"SELECT * FROM 'tasks_task' WHERE {update.message.text}" 
+
+    try:
+        tasks = Task.objects.raw(statement)
+        if tasks:
+            for task in tasks:
+                text = return_task_values(task)
+                await update.effective_message.reply_text(text,reply_markup=ReplyKeyboardRemove())
+        else:
+            await update.effective_message.reply_text("No task", reply_markup=ReplyKeyboardRemove())
+    except Exception as e:
+        await update.message.reply_text("Statement not correct use /help", reply_markup=ReplyKeyboardRemove())
+
+    return ConversationHandler.END
+
+async def overdue_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    
+    job = context.job
+
+    context.user_data['message_id'] = update.message.message_id
+    
+    tasks = Task.objects.filter(due__lte = datetime.now()).order_by('due')
+
+    if tasks:
+        for task in tasks:
+            text = return_task_values(task)
+            keyboard = [
+                [
+                    InlineKeyboardButton("Done", callback_data=f"done:{task.id}"),
+                    InlineKeyboardButton("Delete", callback_data=f"delete:{task.id}"),
+                ],
+                [
+                    InlineKeyboardButton("Add resource", callback_data=f"addrsc:{task.id}"),
+                ],
+            ]
+
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await update.effective_message.reply_text(text, reply_markup=reply_markup)
+    else:
+        await update.effective_message.reply_text("All done!", reply_markup=ReplyKeyboardRemove())
+    
+    return ConversationHandler.END
+
+
+async def today_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    
+    job = context.job
+    
+    context.user_data['message_id'] = update.message.message_id
+
+    start_time = datetime.combine(date.today(), time(0,0))
+    end_time = datetime.combine(date.today() + timedelta(days=1), time(0,0))
+    tasks = Task.objects.filter(due__gte = start_time, due__lte = end_time).order_by('due')
+
+    if tasks:
+        for task in tasks:
+            text = return_task_values(task)
+            await update.effective_message.reply_text(text, reply_markup=ReplyKeyboardRemove())
+    else:
+        await update.effective_message.reply_text("All done!", reply_markup=ReplyKeyboardRemove())
 
     return ConversationHandler.END
 
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Cancels and ends the conversation."""
-    user = update.message.from_user
-    logger.info("User %s canceled the conversation.", user.first_name)
+async def tommorrow_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    
+    job = context.job
+    
+    context.user_data['message_id'] = update.message.message_id
+
+    start_time = datetime.combine(date.today() + timedelta(days=1), time(0,0))
+    end_time = datetime.combine(date.today() + timedelta(days=2), time(0,0))
+    tasks = Task.objects.filter(due__gte = start_time, due__lte = end_time).order_by('due')
+
+    if tasks:
+        for task in tasks:
+            text = return_task_values(task)
+            await update.effective_message.reply_text(text, reply_markup=ReplyKeyboardRemove())
+    else:
+        await update.effective_message.reply_text("All done!", reply_markup=ReplyKeyboardRemove())
+    
+    return ConversationHandler.END
+
+async def all_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    
+    tasks = Task.objects.all()
+
+    if tasks:
+        for task in tasks:
+            text = return_task_values(task)
+            await update.effective_message.reply_text(text, reply_markup=ReplyKeyboardRemove())
+    else:
+        await update.effective_message.reply_text("All done!", reply_markup=ReplyKeyboardRemove())
+    
+    return ConversationHandler.END
+
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Parses the CallbackQuery and updates the message text."""
+    
+    query = update.callback_query
+
+    await query.answer()
+
+    data = query.data.split(':')
+
+    if data[0] == 'delete':
+        Task.objects.get(id = data[1]).delete()
+        await query.edit_message_text(text="Task successfully deleted")
+    elif data[0] == 'done':
+        task = Task.objects.get(id = data[1])
+        task.due += timedelta(days=task.freq)
+        task.save()
+        await query.edit_message_text(text="Task completed")
+
+    
+
+async def delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    
+    current_id = update.message.message_id + 1
+
+    for message_id in range(context.user_data['message_id'],current_id):
+        await context.bot.deleteMessage(message_id = message_id, chat_id = update.message.chat_id)
+
+
+async def cancel_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Skips the photo and asks for a location."""
+
     await update.message.reply_text(
-        "Bye! I hope we can talk again some day.", reply_markup=ReplyKeyboardRemove()
+        "Request cancelled",
+        reply_markup=ReplyKeyboardRemove()
     )
+
+    del context.user_data['values']
 
     return ConversationHandler.END
 
@@ -149,24 +433,50 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 def main() -> None:
     """Run the bot."""
     # Create the Application and pass it your bot's token.
-    application = Application.builder().token("6072917486:AAGWJupGrAGKvGBUqVtwCMKjryugaNY9o2E").build()
+    application = Application.builder().token(config["TEST_TOKEN"]).build()
 
     # Add conversation handler with the states GENDER, PHOTO, LOCATION and BIO
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+    insert_handler = ConversationHandler(
+        entry_points=[CommandHandler("insert", insert)],
         states={
-            GENDER: [MessageHandler(filters.Regex("^(Boy|Girl|Other)$"), gender)],
-            PHOTO: [MessageHandler(filters.PHOTO, photo), CommandHandler("skip", skip_photo)],
-            LOCATION: [
-                MessageHandler(filters.LOCATION, location),
-                CommandHandler("skip", skip_location),
+            SUMMARY : [MessageHandler(filters.TEXT & ~filters.COMMAND, task_summary)],
+            DESCRIPTION : [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, task_description),
+                CommandHandler("no_description", description_skip),
             ],
-            BIO: [MessageHandler(filters.TEXT & ~filters.COMMAND, bio)],
+            DATE : [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, task_due),
+            ],
+            FREQ : [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, task_frequency),
+                CommandHandler("no_frequency", frequency_skip),
+            ],
+            CONFIRM : [CommandHandler("confirm", data_confirm),],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[CommandHandler("c", cancel_request)],
     )
 
-    application.add_handler(conv_handler)
+    select_handler = ConversationHandler(
+        entry_points=[CommandHandler("select", select)],
+        states={
+            QUERY : [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, tasks_query),
+                CommandHandler("today", today_tasks),
+                CommandHandler("overdue", overdue_tasks),
+                CommandHandler("tommorrow", tommorrow_tasks),
+                CommandHandler("all", all_tasks)
+            ]
+        },
+        fallbacks=[CommandHandler("c", cancel_request)],
+    )
+
+    application.add_handler(insert_handler)
+    application.add_handler(select_handler)
+    application.add_handler(CallbackQueryHandler(button))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("timer_start", timer_start))
+    application.add_handler(CommandHandler("timer_stop", timer_stop))
+
 
     # Run the bot until the user presses Ctrl-C
     application.run_polling()
