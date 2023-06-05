@@ -54,45 +54,6 @@ with open("config.json", "r") as config_file:
     config_file.close()
 
 
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-
-    chat_id = update.effective_message.chat_id
-
-    context.job_queue.run_repeating(due_check, 60, chat_id=chat_id, name=str(chat_id), first=1)
-
-    await update.message.reply_text(
-        "Need help? use /help button"
-    )
-
-
-def return_time():
-    start_time = datetime.combine(date.today(), time(7,0))
-    end_time = datetime.combine(date.today(), time(22,0))
-    periods = [25,5,25,5,25,5,25,15]
-    states = {
-        25:"Session started", 
-        5:"Short break", 
-        15:"Long break\nDon't forget to drink water"
-    }
-    times = {}
-    while start_time < end_time:
-        for p in periods:
-            times[start_time.strftime('%H:%M')] = states[p]
-            start_time += timedelta(minutes=p)
-    return times
-
-
-async def notification(context: ContextTypes.DEFAULT_TYPE) -> None:
-    
-    job = context.job
-
-    now  = datetime.now(pytz.timezone('Asia/Tehran')).strftime('%H:%M')
-
-    if now in job.data:
-        await context.bot.send_message(job.chat_id, text=job.data[now])
-
-
 def remove_job_if_exists(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Remove job with given name. Returns whether job was removed."""
 
@@ -104,29 +65,77 @@ def remove_job_if_exists(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
     return True
 
 
-async def timer_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+def timer_intervals():
+    start_time = datetime.combine(date.today(), time(7,0))
+    end_time = datetime.combine(date.today(), time(22,0))
+    periods = [25,5,25,5,25,5,25,15]
+    states = {
+        25:"Session started", 
+        5:"Short break", 
+        15:"Long break\nDon't forget to drink water"
+    }
+    intervals = {}
+    while start_time < end_time:
+        for p in periods:
+            intervals[start_time.strftime('%H:%M')] = states[p]
+            start_time += timedelta(minutes=p)
+    return intervals
 
-    data = return_time()
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     chat_id = update.effective_message.chat_id
 
-    job_removed = remove_job_if_exists(str(chat_id), context)
+    current_jobs = remove_job_if_exists(str(chat_id), context)
+    
+    text = "New job started."
+    if current_jobs:
+        text += " Old ones removed"
 
-    context.job_queue.run_repeating(notification, 60, chat_id=chat_id, name=str(chat_id), data=data, first=1)
+    intervals = timer_intervals()
 
-    text = "Timer successfully set!"
-    if job_removed:
-        text += " Old one was removed."
+    context.job_queue.run_repeating(
+        scheduled_tasks, 
+        60, 
+        chat_id=chat_id, 
+        name=str(chat_id),
+        data=intervals,
+        first=1
+    )
 
     await update.message.reply_text(text)
 
 
-async def timer_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Remove the job if the user changed their mind."""
-    chat_id = update.message.chat_id
-    job_removed = remove_job_if_exists(str(chat_id), context)
-    text = "Timer successfully cancelled!" if job_removed else "You have no active timer."
-    await update.message.reply_text(text)
+async def scheduled_tasks(context: ContextTypes.DEFAULT_TYPE) -> None:
+
+    job = context.job
+
+    now  = timezone.now()
+    then = timezone.now() + timezone.timedelta(minutes=1)
+
+    tasks = Task.objects.filter(due__range = (now, then))
+
+    if tasks:
+        for task in tasks:
+            text = return_task_values(task)
+            keyboard = [
+                [
+                    InlineKeyboardButton("Done", callback_data=f"done:{task.id}"),
+                    InlineKeyboardButton("Delete", callback_data=f"delete:{task.id}"),
+                ],
+                [
+                    InlineKeyboardButton("Add resource", callback_data=f"addrsc:{task.id}"),
+                ],
+            ]
+
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await context.bot.send_message(job.chat_id, text=text, reply_markup=reply_markup)
+    
+    now  = datetime.now(pytz.timezone('Asia/Tehran')).strftime('%H:%M')
+    if now in job.data:
+        await context.bot.send_message(job.chat_id, text=job.data[now])
+
 
 SUMMARY, DESCRIPTION, DATE, FREQ, CONFIRM = range(5)
 
@@ -397,33 +406,6 @@ async def all_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     return ConversationHandler.END
 
 
-async def due_check(context: ContextTypes.DEFAULT_TYPE) -> None:
-
-    job = context.job
-
-    now  = timezone.now()
-    then = timezone.now() + timezone.timedelta(minutes=1)
-
-    tasks = Task.objects.filter(due__range = (now, then))
-
-    if tasks:
-        for task in tasks:
-            text = return_task_values(task)
-            keyboard = [
-                [
-                    InlineKeyboardButton("Done", callback_data=f"done:{task.id}"),
-                    InlineKeyboardButton("Delete", callback_data=f"delete:{task.id}"),
-                ],
-                [
-                    InlineKeyboardButton("Add resource", callback_data=f"addrsc:{task.id}"),
-                ],
-            ]
-
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-            await context.bot.send_message(job.chat_id, text=text, reply_markup=reply_markup)
-
-
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Parses the CallbackQuery and updates the message text."""
     
@@ -508,9 +490,6 @@ def main() -> None:
     application.add_handler(select_handler)
     application.add_handler(CallbackQueryHandler(button))
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("timer_start", timer_start))
-    application.add_handler(CommandHandler("timer_stop", timer_stop))
-
 
     # Run the bot until the user presses Ctrl-C
     application.run_polling()
