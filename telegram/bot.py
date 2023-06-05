@@ -53,44 +53,6 @@ with open("/code/telegram/config.json", "r") as config_file:
     config_file.close()
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-
-    chat_id = update.effective_message.chat_id
-
-    context.job_queue.run_repeating(due_check, 60, chat_id=chat_id, name=str(chat_id), first=1)
-
-    await update.message.reply_text(
-        "Need help? use /help button"
-    )
-
-
-def return_time():
-    start_time = datetime.combine(date.today(), time(7,0))
-    end_time = datetime.combine(date.today(), time(22,0))
-    periods = [25,5,25,5,25,5,25,15]
-    states = {
-        25:"Session started", 
-        5:"Short break", 
-        15:"Long break\nDon't forget to drink water"
-    }
-    times = {}
-    while start_time < end_time:
-        for p in periods:
-            times[start_time.strftime('%H:%M')] = states[p]
-            start_time += timedelta(minutes=p)
-    return times
-
-
-async def notification(context: ContextTypes.DEFAULT_TYPE) -> None:
-    
-    job = context.job
-
-    now  = datetime.now(pytz.timezone('Asia/Tehran')).strftime('%H:%M')
-
-    if now in job.data:
-        await context.bot.send_message(job.chat_id, text=job.data[now])
-
-
 def remove_job_if_exists(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Remove job with given name. Returns whether job was removed."""
 
