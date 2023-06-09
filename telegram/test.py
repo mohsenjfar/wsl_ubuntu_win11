@@ -1,24 +1,19 @@
+#!/usr/bin/env python
+# pylint: disable=unused-argument, wrong-import-position
+# This program is dedicated to the public domain under the CC0 license.
+
+"""
+Simple Bot to showcase `telegram.ext.ContextTypes`.
+
+Usage:
+Press Ctrl-C on the command line or send a signal to the process to stop the
+bot.
+"""
+
 import logging
-import json
-from datetime import date, time, datetime, timedelta
-import pytz
-import pandas as pd
-from telegram import (
-    Update,
-    ReplyKeyboardMarkup,
-    ReplyKeyboardRemove,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-    ConversationHandler,
-    MessageHandler,
-    filters,
-    CallbackQueryHandler,
-)
+from collections import defaultdict
+from typing import DefaultDict, Optional, Set
+
 from telegram import __version__ as TG_VER
 
 try:
@@ -32,454 +27,127 @@ if __version_info__ < (20, 0, 0, "alpha", 1):
         f"{TG_VER} version of this example, "
         f"visit https://docs.python-telegram-bot.org/en/v{TG_VER}/examples.html"
     )
-
-# from asgiref.sync import async_to_sync
-import sys, os, django
-sys.path.append('/root/taskerbot')
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "backend.settings")
-os.environ["DJANGO_ALLOW_ASYNC_UNSAFE"] = "true"
-django.setup()
-
-from tasks.models import Task
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ParseMode
+from telegram.ext import (
+    Application,
+    CallbackContext,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    ExtBot,
+    TypeHandler,
+)
 
 # Enable logging
-# logging.basicConfig(
-#     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-# )
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 
-with open("config.json", "r") as config_file:
-    config = json.load(config_file)
-    config_file.close()
+class ChatData:
+    """Custom class for chat_data. Here we store data per message."""
+
+    def __init__(self) -> None:
+        self.clicks_per_message: DefaultDict[int, int] = defaultdict(int)
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Starts the conversation"""
+# The [ExtBot, dict, ChatData, dict] is for type checkers like mypy
+class CustomContext(CallbackContext[ExtBot, dict, ChatData, dict]):
+    """Custom class for context."""
 
-    await update.message.reply_text(
-        "Need help? use /help button"
-    )
+    def __init__(
+        self,
+        application: Application,
+        chat_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+    ):
+        super().__init__(application=application, chat_id=chat_id, user_id=user_id)
+        self._message_id: Optional[int] = None
 
+    @property
+    def bot_user_ids(self) -> Set[int]:
+        """Custom shortcut to access a value stored in the bot_data dict"""
+        return self.bot_data.setdefault("user_ids", set())
 
-def return_time():
-    start_time = datetime.combine(date.today(), time(7,0))
-    end_time = datetime.combine(date.today(), time(22,0))
-    periods = [25,5,25,5,25,5,25,15]
-    states = {
-        25:"Session started", 
-        5:"Short break", 
-        15:"Long break\nDon't forget to drink water"
-    }
-    times = {}
-    while start_time < end_time:
-        for p in periods:
-            times[start_time.strftime('%H:%M')] = states[p]
-            start_time += timedelta(minutes=p)
-    return times
+    @property
+    def message_clicks(self) -> Optional[int]:
+        """Access the number of clicks for the message this context object was built for."""
+        if self._message_id:
+            return self.chat_data.clicks_per_message[self._message_id]
+        return None
 
+    @message_clicks.setter
+    def message_clicks(self, value: int) -> None:
+        """Allow to change the count"""
+        if not self._message_id:
+            raise RuntimeError("There is no message associated with this context object.")
+        self.chat_data.clicks_per_message[self._message_id] = value
 
-async def notification(context: ContextTypes.DEFAULT_TYPE) -> None:
-    
-    job = context.job
+    @classmethod
+    def from_update(cls, update: object, application: "Application") -> "CustomContext":
+        """Override from_update to set _message_id."""
+        # Make sure to call super()
+        context = super().from_update(update, application)
 
-    now  = datetime.now(pytz.timezone('Asia/Tehran')).strftime('%H:%M')
+        if context.chat_data and isinstance(update, Update) and update.effective_message:
+            # pylint: disable=protected-access
+            context._message_id = update.effective_message.message_id
 
-    if now in job.data:
-        await context.bot.send_message(job.chat_id, text=job.data[now])
-
-
-def remove_job_if_exists(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Remove job with given name. Returns whether job was removed."""
-
-    current_jobs = context.job_queue.get_jobs_by_name(name)
-    if not current_jobs:
-        return False
-    for job in current_jobs:
-        job.schedule_removal()
-    return True
-
-
-async def timer_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-
-    data = return_time()
-
-    chat_id = update.effective_message.chat_id
-
-    job_removed = remove_job_if_exists(str(chat_id), context)
-
-    context.job_queue.run_repeating(notification, 60, chat_id=chat_id, name=str(chat_id), data=data, first=1)
-
-    text = "Timer successfully set!"
-    if job_removed:
-        text += " Old one was removed."
-
-    await update.message.reply_text(text)
+        # Remember to return the object
+        return context
 
 
-async def timer_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Remove the job if the user changed their mind."""
-    chat_id = update.message.chat_id
-    job_removed = remove_job_if_exists(str(chat_id), context)
-    text = "Timer successfully cancelled!" if job_removed else "You have no active timer."
-    await update.message.reply_text(text)
-
-SUMMARY, DESCRIPTION, DATE, FREQ, CONFIRM = range(5)
-
-async def insert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-
-    context.user_data['values'] = {}
-
-    await update.message.reply_text(
-        "Task summary:"
-    )
-
-    return SUMMARY
-
-
-async def task_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    
-    context.user_data['values']['summary'] = update.message.text
-
-    reply_keyboard = [
-        ["/no_description"]
-    ]
-
-    await update.message.reply_text(
-        "Task description:",
-        reply_markup=ReplyKeyboardMarkup(
-            reply_keyboard, 
-            one_time_keyboard=True, 
-            resize_keyboard=True
+async def start(update: Update, context: CustomContext) -> None:
+    """Display a message with a button."""
+    await update.message.reply_html(
+        "This button was clicked <i>0</i> times.",
+        reply_markup=InlineKeyboardMarkup.from_button(
+            InlineKeyboardButton(text="Click me!", callback_data="button")
         ),
     )
 
-    return DESCRIPTION
 
-async def task_description(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    
-    context.user_data['values']['description'] = update.message.text
-
-    await update.message.reply_text(
-        "Task due time (yyyy-mm-dd hh:mm):",
-    )
-
-    return DATE
-
-async def description_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-
-    await update.message.reply_text(
-        "Task due time (yyyy-mm-dd hh:mm):"
-    )
-
-    return DATE
-
-
-async def task_due(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    
-    context.user_data['values']['date'] = update.message.text
-
-    reply_keyboard = [
-        ["/no_frequency"]
-    ]
-
-    await update.message.reply_text(
-        "Task frequency in days",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
-    )
-
-    return FREQ
-
-async def task_frequency(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-
-    """Stores the info about the user and ends the conversation."""
-    
-    context.user_data['values']['freq'] = int(update.message.text)
-
-    text = ""
-
-    for value in context.user_data['values']:
-        text += f"{value}: {context.user_data['values'][value]}\n"
-
-    reply_keyboard = [
-        ["/confirm"]
-    ]
-
-    await update.message.reply_text(
-        "Confirm data:\n\n" + text,
-        reply_markup=ReplyKeyboardMarkup(
-            reply_keyboard, 
-            one_time_keyboard=True, 
-            resize_keyboard=True
+async def count_click(update: Update, context: CustomContext) -> None:
+    """Update the click count for the message."""
+    context.message_clicks += 1
+    await update.callback_query.answer()
+    await update.effective_message.edit_text(
+        f"This button was clicked <i>{context.message_clicks}</i> times.",
+        reply_markup=InlineKeyboardMarkup.from_button(
+            InlineKeyboardButton(text="Click me!", callback_data="button")
         ),
+        parse_mode=ParseMode.HTML,
     )
 
-    return CONFIRM
 
-async def frequency_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Skips the location and asks for info about the user."""
-
-    text = ""
-
-    for value in context.user_data['values']:
-        text += f"{value}: {context.user_data['values'][value]}\n"
-
-    reply_keyboard = [
-        ["/confirm"]
-    ]
-
+async def print_users(update: Update, context: CustomContext) -> None:
+    """Show which users have been using this bot."""
     await update.message.reply_text(
-        "Confirm data:\n\n" + text,
-        reply_markup=ReplyKeyboardMarkup(
-            reply_keyboard, 
-            one_time_keyboard=True, 
-            resize_keyboard=True
-        ),
+        "The following user IDs have used this bot: "
+        f'{", ".join(map(str, context.bot_user_ids))}'
     )
 
-    return CONFIRM
 
-
-async def data_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-
-    # Create the tuple "params" with all the parameters inserted by the user
-    values = context.user_data['values']
-
-    Task.objects.create(
-        summary = values['summary'],
-        due = datetime.strptime(values['date'], '%Y-%m-%d %H:%M'),
-        freq = values['freq'] if 'freq' in values else None,
-        description = values['description'] if 'description' in values else None
-    )
-
-    await update.message.reply_text(
-        f"{values['summary']} successfully inserted.",
-        reply_markup=ReplyKeyboardRemove()
-    )
-
-    del context.user_data['values']
-
-    return ConversationHandler.END
-
-QUERY = range(1)
-
-
-def return_task_values(task):
-    id = task.id
-    summary = task.summary
-    dt = datetime.strftime(task.due, '%Y-%m-%d %H:%M')
-    description = f'\nDescription: {task.description}'
-    text = f"Summary: {summary}\nDate: {dt}" + description
-    return text
-
-
-async def select(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-
-    reply_keyboard = [
-        ["/overdue", "/today"],
-        ["/tommorrow", "/all"]
-    ]
-
-    await update.message.reply_text(
-        "Type query statement or use keyboard shortcuts:",
-        reply_markup=ReplyKeyboardMarkup(
-            reply_keyboard, 
-            one_time_keyboard=True, 
-            resize_keyboard=True
-        ),
-    )
-
-    return QUERY
-
-async def tasks_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    
-    statement = f"SELECT * FROM 'tasks_task' WHERE {update.message.text}" 
-
-    try:
-        tasks = Task.objects.raw(statement)
-        if tasks:
-            for task in tasks:
-                text = return_task_values(task)
-                await update.effective_message.reply_text(text,reply_markup=ReplyKeyboardRemove())
-        else:
-            await update.effective_message.reply_text("No task", reply_markup=ReplyKeyboardRemove())
-    except Exception as e:
-        await update.message.reply_text("Statement not correct use /help", reply_markup=ReplyKeyboardRemove())
-
-    return ConversationHandler.END
-
-async def overdue_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    
-    job = context.job
-
-    context.user_data['message_id'] = update.message.message_id
-    
-    tasks = Task.objects.filter(due__lte = datetime.now()).order_by('due')
-
-    if tasks:
-        for task in tasks:
-            text = return_task_values(task)
-            keyboard = [
-                [
-                    InlineKeyboardButton("Done", callback_data=f"done:{task.id}"),
-                    InlineKeyboardButton("Delete", callback_data=f"delete:{task.id}"),
-                ],
-                [
-                    InlineKeyboardButton("Add resource", callback_data=f"addrsc:{task.id}"),
-                ],
-            ]
-
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-            await update.effective_message.reply_text(text, reply_markup=reply_markup)
-    else:
-        await update.effective_message.reply_text("All done!", reply_markup=ReplyKeyboardRemove())
-    
-    return ConversationHandler.END
-
-
-async def today_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    
-    job = context.job
-    
-    context.user_data['message_id'] = update.message.message_id
-
-    start_time = datetime.combine(date.today(), time(0,0))
-    end_time = datetime.combine(date.today() + timedelta(days=1), time(0,0))
-    tasks = Task.objects.filter(due__gte = start_time, due__lte = end_time).order_by('due')
-
-    if tasks:
-        for task in tasks:
-            text = return_task_values(task)
-            await update.effective_message.reply_text(text, reply_markup=ReplyKeyboardRemove())
-    else:
-        await update.effective_message.reply_text("All done!", reply_markup=ReplyKeyboardRemove())
-
-    return ConversationHandler.END
-
-
-async def tommorrow_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    
-    job = context.job
-    
-    context.user_data['message_id'] = update.message.message_id
-
-    start_time = datetime.combine(date.today() + timedelta(days=1), time(0,0))
-    end_time = datetime.combine(date.today() + timedelta(days=2), time(0,0))
-    tasks = Task.objects.filter(due__gte = start_time, due__lte = end_time).order_by('due')
-
-    if tasks:
-        for task in tasks:
-            text = return_task_values(task)
-            await update.effective_message.reply_text(text, reply_markup=ReplyKeyboardRemove())
-    else:
-        await update.effective_message.reply_text("All done!", reply_markup=ReplyKeyboardRemove())
-    
-    return ConversationHandler.END
-
-async def all_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    
-    tasks = Task.objects.all()
-
-    if tasks:
-        for task in tasks:
-            text = return_task_values(task)
-            await update.effective_message.reply_text(text, reply_markup=ReplyKeyboardRemove())
-    else:
-        await update.effective_message.reply_text("All done!", reply_markup=ReplyKeyboardRemove())
-    
-    return ConversationHandler.END
-
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Parses the CallbackQuery and updates the message text."""
-    
-    query = update.callback_query
-
-    await query.answer()
-
-    data = query.data.split(':')
-
-    if data[0] == 'delete':
-        Task.objects.get(id = data[1]).delete()
-        await query.edit_message_text(text="Task successfully deleted")
-    elif data[0] == 'done':
-        task = Task.objects.get(id = data[1])
-        task.due += timedelta(days=task.freq)
-        task.save()
-        await query.edit_message_text(text="Task completed")
-
-    
-
-async def delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    
-    current_id = update.message.message_id + 1
-
-    for message_id in range(context.user_data['message_id'],current_id):
-        await context.bot.deleteMessage(message_id = message_id, chat_id = update.message.chat_id)
-
-
-async def cancel_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Skips the photo and asks for a location."""
-
-    await update.message.reply_text(
-        "Request cancelled",
-        reply_markup=ReplyKeyboardRemove()
-    )
-
-    del context.user_data['values']
-
-    return ConversationHandler.END
+async def track_users(update: Update, context: CustomContext) -> None:
+    """Store the user id of the incoming update, if any."""
+    if update.effective_user:
+        context.bot_user_ids.add(update.effective_user.id)
 
 
 def main() -> None:
     """Run the bot."""
-    # Create the Application and pass it your bot's token.
-    application = Application.builder().token(config["TEST_TOKEN"]).build()
+    context_types = ContextTypes(context=CustomContext, chat_data=ChatData)
+    application = Application.builder().token("6072917486:AAGWJupGrAGKvGBUqVtwCMKjryugaNY9o2E").context_types(context_types).build()
 
-    # Add conversation handler with the states GENDER, PHOTO, LOCATION and BIO
-    insert_handler = ConversationHandler(
-        entry_points=[CommandHandler("insert", insert)],
-        states={
-            SUMMARY : [MessageHandler(filters.TEXT & ~filters.COMMAND, task_summary)],
-            DESCRIPTION : [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, task_description),
-                CommandHandler("no_description", description_skip),
-            ],
-            DATE : [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, task_due),
-            ],
-            FREQ : [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, task_frequency),
-                CommandHandler("no_frequency", frequency_skip),
-            ],
-            CONFIRM : [CommandHandler("confirm", data_confirm),],
-        },
-        fallbacks=[CommandHandler("c", cancel_request)],
-    )
-
-    select_handler = ConversationHandler(
-        entry_points=[CommandHandler("select", select)],
-        states={
-            QUERY : [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, tasks_query),
-                CommandHandler("today", today_tasks),
-                CommandHandler("overdue", overdue_tasks),
-                CommandHandler("tommorrow", tommorrow_tasks),
-                CommandHandler("all", all_tasks)
-            ]
-        },
-        fallbacks=[CommandHandler("c", cancel_request)],
-    )
-
-    application.add_handler(insert_handler)
-    application.add_handler(select_handler)
-    application.add_handler(CallbackQueryHandler(button))
+    # run track_users in its own group to not interfere with the user handlers
+    application.add_handler(TypeHandler(Update, track_users), group=-1)
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("timer_start", timer_start))
-    application.add_handler(CommandHandler("timer_stop", timer_stop))
+    application.add_handler(CallbackQueryHandler(count_click))
+    application.add_handler(CommandHandler("print_users", print_users))
 
-
-    # Run the bot until the user presses Ctrl-C
-    application.run_polling()
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
