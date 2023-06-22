@@ -1,4 +1,0 @@
-start - Start
-insert - Add task
-select - Search for task
-help - Help
