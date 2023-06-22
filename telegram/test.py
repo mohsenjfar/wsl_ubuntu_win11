@@ -52,6 +52,8 @@ class ChatData:
     def __init__(self) -> None:
         self.clicks_per_message: DefaultDict[int, int] = defaultdict(int)
 
+        "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"
+
 
 # The [ExtBot, dict, ChatData, dict] is for type checkers like mypy
 class CustomContext(CallbackContext[ExtBot, dict, ChatData, dict]):
