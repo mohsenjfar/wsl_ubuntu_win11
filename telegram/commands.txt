@@ -1,5 +1,0 @@
-timer_start - Pomodoro start
-timer_stop - Pomodoro stop
-insert - Add task
-select - Search for task
-help - Help
