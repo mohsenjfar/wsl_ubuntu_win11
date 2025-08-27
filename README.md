@@ -1,27 +1,28 @@
-# Step 1 - Enable the Windows Subsystem for Linux
+# How to config wsl on windows 11 and install Ubuntu 20.04
+### Step 1 - Enable the Windows Subsystem for Linux
 ```powershell
 dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
 ```
 
-# Step 2 - Check requirements for running WSL 2 (optional)
+### Step 2 - Check requirements for running WSL 2 (optional)
 ```powershell
 dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
 ```
 
-# Step 3 - Download the Linux kernel update package (optional)
+### Step 3 - Download the Linux kernel update package (optional)
 [WSL2 Linux kernel update package for x64 machines](https://wslstorestorage.blob.core.windows.net/wslblob/wsl_update_x64.msi)
 
-# Step 4 - Set WSL 2 as your default version (optional)
+### Step 4 - Set WSL 2 as your default version (optional)
 ```powershell
 wsl --set-default-version 2
 ```
 
-# Step 5 - Downloading distributions
+### Step 5 - Downloading distributions
 ```powershell
 Invoke-WebRequest -Uri https://aka.ms/wslubuntu2004 -OutFile Ubuntu.appx -UseBasicParsing
 ```
 
-# Step 6 - Install distro manually
+### Step 6 - Install distro manually
 1. Create Ubuntu folder in C:\Users\user\AppData\Local
 2. Copy Ubuntu.appx to Ubuntu folder
 3. Change appx extention to zip and unzip file
